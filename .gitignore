@@ -1,0 +1,28 @@
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Game Saves (Local user data)
+saves/
+tests/save_examples/
+
+# OS Specific
+.DS_Store
+Thumbs.db
+
+# Project Specific
+.env
+*.log
