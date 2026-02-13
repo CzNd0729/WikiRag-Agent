@@ -21,7 +21,7 @@
 *   **及时维护 .gitignore**: 
     *   在引入新依赖、生成临时文件、缓存或敏感信息（如 API Key）时，必须检查并更新 `.gitignore`。
     *   严禁将 `.env`、虚拟环境目录（如 `venv/`）或操作系统缓存（如 `.DS_Store`）提交到版本控制。
-*   **依赖管理**: 新增库文件时，需同步更新 `requirements.txt` 或 `pyproject.toml`。
+*   **依赖管理**: 新增库文件时，需同步更新 `pyproject.toml`。
 
 ## 📖 4. 上下文感知
 

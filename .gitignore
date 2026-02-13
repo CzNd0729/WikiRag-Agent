@@ -27,3 +27,4 @@ Thumbs.db
 # Project Specific
 .env
 *.log
+data/
