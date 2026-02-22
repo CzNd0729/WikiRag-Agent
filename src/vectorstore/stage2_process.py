@@ -3,6 +3,7 @@ import json
 import os
 import re
 import argparse
+from markdownify import markdownify as md
 
 class WikiProcessor:
     """
@@ -16,84 +17,90 @@ class WikiProcessor:
             os.makedirs(processed_dir)
 
     def html_to_markdown(self, html_content: str) -> str:
-        """提取正文并转为 Markdown，移除目录和冗余元素"""
+        """提取正文并转为 Markdown，保留表格，移除冗余元素"""
         soup = BeautifulSoup(html_content, "lxml")
         
-        # 彻底清除目录和浮动容器
-        for element in list(soup.find_all(True)):
-            if not element.parent: continue
-            
-            # 检查 TOC class/id
-            classes = element.get('class', [])
-            if classes and isinstance(classes, str): classes = [classes]
-            if (classes and 'toc' in classes) or element.get('id') == 'toc':
-                element.decompose()
-                continue
-            
-            # 检查标题中的 Contents/目录
-            if element.name in ['h1', 'h2', 'h3', 'h4']:
-                text = element.get_text().strip()
-                if re.search(r'^(Contents|目录)$', text, re.I):
-                    container = element
-                    while container.parent and container.parent.name not in ['body', '[document]', 'html']:
-                        parent = container.parent
-                        style = str(parent.get('style', ''))
-                        p_classes = parent.get('class', [])
-                        if p_classes and isinstance(p_classes, str): p_classes = [p_classes]
-                        if 'float' in style or (p_classes and ('toc' in p_classes or 'toctitle' in p_classes)):
-                            container = parent
-                        else:
-                            break
-                    if container == element:
-                        next_node = element.find_next_sibling()
-                        if next_node and next_node.name in ['ul', 'ol']:
-                            next_node.decompose()
-                    container.decompose()
-
-        # 移除编辑链接和不需要的标签
+        # 1. 预清洗：移除绝对不需要的元素
+        # 移除编辑链接
         for edit_section in soup.find_all('span', class_='mw-editsection'):
             edit_section.decompose()
-        for element in soup(["script", "style", "table", "div.mw-references-wrap", ".mw-empty-elt"]):
-            element.decompose()
             
-        markdown_parts = []
-        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'li']):
-            content = element.get_text().strip()
-            if not content: continue
-            if element.name == 'h1': markdown_parts.append(f"# {content}")
-            elif element.name == 'h2': markdown_parts.append(f"## {content}")
-            elif element.name == 'h3': markdown_parts.append(f"### {content}")
-            elif element.name == 'li': markdown_parts.append(f"* {content}")
-            else: markdown_parts.append(content)
-                    
-        return "\n\n".join(markdown_parts)
+        # 移除脚本、样式、空元素、引用包装、侧边栏/导航等
+        bad_selectors = [
+            "script", "style", ".mw-empty-elt", "div.mw-references-wrap",
+            "#toc", ".toc", ".navbox", ".catlinks", "#footer", "#header"
+        ]
+        for selector in bad_selectors:
+            for element in soup.select(selector):
+                element.decompose()
 
-    def process_all(self):
-        """递归处理 data/raw 下的所有 JSON 文件"""
+        # 2. 特殊处理：将 img 转换为 [Alt文本] 或 [文件名]
+        for img in soup.find_all('img'):
+            alt = img.get('alt', '').strip()
+            if not alt:
+                src = img.get('src', '')
+                alt = os.path.basename(src).split('?')[0] if src else 'Image'
+            
+            # 替换为文本节点
+            img.replace_with(f"[{alt}]")
+
+        # 3. 使用 markdownify 进行转换
+        # 我们不再 strip 'img'，因为我们已经手动处理了它们
+        content_markdown = md(
+            str(soup),
+            heading_style="ATX",
+            newline_style="BACKSLASH",
+            strip=['script', 'style', 'a', 'form', 'input', 'button'], # 移除干扰 RAG 的标签
+        )
+
+        # 4. 后处理
+        # 清理 data-sort-value (Wiki 常见的冗余属性)
+        content_markdown = re.sub(r'data-sort-value="[^"]*"', '', content_markdown)
+        # 清理多余空行
+        content_markdown = re.sub(r'\n{3,}', '\n\n', content_markdown)
+        content_markdown = content_markdown.strip()
+                    
+        return content_markdown
+
+    def process_file(self, raw_path: str):
+        """处理单个 JSON 文件"""
+        with open(raw_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        
+        category = raw_data.get("category", "Uncategorized")
+        target_dir = os.path.join(self.processed_dir, category)
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir)
+
+        print(f"Processing {category}/{os.path.basename(raw_path)}...")
+        markdown = self.html_to_markdown(raw_data["html_body"])
+        
+        header = f"---\ntitle: {raw_data['title']}\ncategory: {category}\nurl: {raw_data['url']}\nscraped_at: {raw_data['scraped_at']}\n---\n\n"
+        
+        md_filename = os.path.basename(raw_path).replace(".json", ".md")
+        md_path = os.path.join(target_dir, md_filename)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(header + markdown)
+
+    def process_all(self, target_file: str = None):
+        """递归处理 data/raw 下的所有 JSON 文件，或处理指定文件"""
         if not os.path.exists(self.raw_dir): return
 
         for root, dirs, files in os.walk(self.raw_dir):
             for filename in files:
                 if filename.endswith(".json"):
+                    # 允许 target_file 匹配文件名的一部分，方便调试
+                    if target_file and target_file not in filename:
+                        continue
+                    
                     raw_path = os.path.join(root, filename)
-                    with open(raw_path, "r", encoding="utf-8") as f:
-                        raw_data = json.load(f)
-                    
-                    category = raw_data.get("category", "Uncategorized")
-                    target_dir = os.path.join(self.processed_dir, category)
-                    if not os.path.exists(target_dir):
-                        os.makedirs(target_dir)
-
-                    print(f"Processing {category}/{filename}...")
-                    markdown = self.html_to_markdown(raw_data["html_body"])
-                    
-                    header = f"---\ntitle: {raw_data['title']}\ncategory: {category}\nurl: {raw_data['url']}\nscraped_at: {raw_data['scraped_at']}\n---\n\n"
-                    
-                    md_path = os.path.join(target_dir, filename.replace(".json", ".md"))
-                    with open(md_path, "w", encoding="utf-8") as f:
-                        f.write(header + markdown)
+                    self.process_file(raw_path)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file", help="Specific JSON file to process (filename only or with .json)")
+    args = parser.parse_args()
+
     processor = WikiProcessor()
-    processor.process_all()
+    processor.process_all(target_file=args.file)
     print("--- Stage 2 Complete ---")
