@@ -1,7 +1,8 @@
 import os
+import time
 from typing import List
 from langchain_chroma import Chroma  
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever
@@ -16,7 +17,10 @@ class WikiVectorStore:
     """
     def __init__(self, persist_directory: str = "vectorstore/db"):
         self.persist_directory = persist_directory
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")
+        
+        # 带有重试机制的 Embedding 初始化
+        self.embeddings = self._init_embeddings()
+        
         self.vector_db = Chroma(
             persist_directory=persist_directory,
             embedding_function=self.embeddings,
@@ -28,6 +32,29 @@ class WikiVectorStore:
             length_function=len,
             is_separator_regex=False,
         )
+
+    def _init_embeddings(self, max_retries: int = 3):
+        """
+        初始化 Embedding 模型，包含简单的重试逻辑。
+        """
+        last_exception = None
+        for i in range(max_retries):
+            try:
+                # 使用 SiliconFlow 提供的 BAAI/bge-m3 模型
+                # 设置 chunk_size=64 以符合 SiliconFlow 的 Batch Size 限制 (报错 413)
+                return OpenAIEmbeddings(
+                    model="BAAI/bge-m3",
+                    openai_api_key=os.getenv("SILICONFLOW_API_KEY"),
+                    openai_api_base=os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1"),
+                    chunk_size=64
+                )
+            except Exception as e:
+                last_exception = e
+                print(f"Embedding initialization failed (attempt {i+1}/{max_retries}): {e}. Waiting 5s...")
+                if i < max_retries - 1:
+                    time.sleep(5)
+        
+        raise last_exception
 
     def add_documents(self, text: str, metadata: dict):
         """
@@ -72,11 +99,8 @@ class WikiVectorStore:
         return ensemble_retriever
 
 if __name__ == "__main__":
-    # 简单测试代码（需要 GOOGLE_API_KEY）
-    if not os.getenv("GOOGLE_API_KEY"):
-        print("Warning: GOOGLE_API_KEY not found in environment.")
-    else:
-        vdb = WikiVectorStore()
+    # 简单测试代码
+    vdb = WikiVectorStore()
         # vdb.add_documents("星露谷物语中的甜瓜是一种夏季作物。", {"title": "Melon", "url": "..."})
         # results = vdb.similarity_search("甜瓜怎么种？")
         # for doc in results:

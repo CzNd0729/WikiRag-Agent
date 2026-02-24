@@ -1,5 +1,8 @@
 import os
+import re
+import time
 import argparse
+import traceback
 from vectorstore.query_rag import WikiVectorStore
 
 class WikiIndexer:
@@ -31,6 +34,10 @@ class WikiIndexer:
                     with open(md_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     
+                    # 剥离 Markdown 开头的 YAML Front-matter 元数据
+                    # 寻找第一个 --- 和第二个 --- 之间的内容并移除
+                    clean_content = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, flags=re.DOTALL)
+                    
                     title = filename.replace(".md", "").replace("_", " ")
                     metadata = {
                         "title": title,
@@ -39,7 +46,19 @@ class WikiIndexer:
                     }
                     
                     print(f"Indexing {category}/{filename}...")
-                    self.vdb.add_documents(content, metadata)
+                    
+                    success = False
+                    while not success:
+                        try:
+                            # 使用清洗后的内容进行分块和索引
+                            self.vdb.add_documents(clean_content, metadata)
+                            success = True
+                        except Exception as e:
+                            print(f"Error indexing {filename}: {e}")
+                            # traceback.print_exc()
+                            print("Waiting 5s before retrying...")
+                            time.sleep(5)
+                    
                     count += 1
 
 if __name__ == "__main__":

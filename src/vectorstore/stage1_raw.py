@@ -110,12 +110,12 @@ class WikiRawCrawler:
         return categories
 
     def fetch_raw_content(self, title: str, category: str = "Uncategorized") -> Optional[Dict]:
-        """获取指定页面的原始 HTML 内容"""
+        """获取指定页面的原始 HTML 内容，优先获取中文词条"""
         params = {
             "action": "parse",
             "page": title,
             "format": "json",
-            "prop": "text",
+            "prop": "text|langlinks",
             "redirects": 1
         }
         try:
@@ -126,16 +126,49 @@ class WikiRawCrawler:
                 print(f"Error fetching {title}: {data['error']['info']}")
                 return None
             
+            # 提取中文关联
+            zh_title = None
+            zh_url = None
+            html_body = data["parse"]["text"]["*"]
+            final_title = title
+            final_url = f"{self.BASE_URL}/{title.replace(' ', '_')}"
+
+            if "langlinks" in data["parse"]:
+                for link in data["parse"]["langlinks"]:
+                    if link["lang"] == "zh":
+                        zh_title = link["*"]
+                        zh_url = link.get("url")
+                        break
+            
+            # 如果有中文链接，直接下载该页面内容
+            if zh_url:
+                try:
+                    print(f"  Downloading Chinese page: {zh_title} ({zh_url})")
+                    zh_response = requests.get(zh_url, timeout=10)
+                    zh_response.raise_for_status()
+                    html_body = zh_response.text
+                    final_title = zh_title
+                    final_url = zh_url
+                except Exception as zh_e:
+                    print(f"  Failed to download Chinese page for {title}: {zh_e}")
+
             return {
-                "title": title,
+                "title": final_title,
                 "category": category,
-                "url": f"{self.BASE_URL}/{title.replace(' ', '_')}",
-                "html_body": data["parse"]["text"]["*"],
+                "url": final_url,
+                "html_body": html_body,
                 "scraped_at": datetime.now().isoformat()
             }
         except Exception as e:
             print(f"Request failed for {title}: {e}")
             return None
+
+    def file_exists(self, title: str, category: str) -> bool:
+        """检查指定标题的文件是否已存在"""
+        safe_category = re.sub(r'[\\/*?:"<>|]', "_", category)
+        safe_title = title.replace(" ", "_").replace("/", "_").replace(":", "_").replace("?", "_")
+        file_path = os.path.join(self.storage_dir, safe_category, f"{safe_title}.json")
+        return os.path.exists(file_path)
 
     def save_raw(self, data: Dict):
         """按分类存储为 JSON"""
@@ -188,13 +221,16 @@ if __name__ == "__main__":
             for title in pages:
                 if args.limit and count >= args.limit: break
                 
-                # 去重检查
+                # 运行时去重检查
                 if not args.force and title in scraped_titles:
                     continue
                 
-                # 检查本地 data/raw 是否已经存在该文件 (跨运行去重)
-                # 这能解决“为什么 Spring Fish 被跳过”的问题：可能是之前运行过，文件已在磁盘上
-                # 但为了强制重新拉取，我们可以在命令行增加 --force
+                # 跨运行文件检查：如果非 force 模式且文件已存在，则跳过
+                if not args.force and crawler.file_exists(title, category=cat_name):
+                    print(f"  Skipping '{title}' (already exists in {cat_name})")
+                    scraped_titles.add(title)
+                    count += 1
+                    continue
                 
                 data = crawler.fetch_raw_content(title, category=cat_name)
                 if data:

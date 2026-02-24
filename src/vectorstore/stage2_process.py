@@ -20,6 +20,14 @@ class WikiProcessor:
         """提取正文并转为 Markdown，保留表格，移除冗余元素"""
         soup = BeautifulSoup(html_content, "lxml")
         
+        # 0. 尝试只提取正文容器内容，如果存在
+        # MediaWiki 的正文通常在 #mw-content-text 或 #content 中
+        content_div = soup.select_one("#mw-content-text") or soup.select_one("#content")
+        if content_div:
+            # 使用 content_div 作为新的 soup 根，但这可能会丢失标题
+            # 为了保留标题，我们可以只移除已知的侧边栏和页眉页脚
+            pass
+
         # 1. 预清洗：移除绝对不需要的元素
         # 移除编辑链接
         for edit_section in soup.find_all('span', class_='mw-editsection'):
@@ -28,7 +36,11 @@ class WikiProcessor:
         # 移除脚本、样式、空元素、引用包装、侧边栏/导航等
         bad_selectors = [
             "script", "style", ".mw-empty-elt", "div.mw-references-wrap",
-            "#toc", ".toc", ".navbox", ".catlinks", "#footer", "#header"
+            "#toc", ".toc", ".navbox", "#navbox", ".catlinks", "#footer", "#header",
+            "#mw-navigation", "#mw-head", "#mw-panel", "#p-navigation", "#p-tb", "#p-lang",
+            ".printfooter", ".noprint", "#p-personal", "#p-search", "#p-cactions", "#p-variants", "#p-views",
+            "#siteSub", "#contentSub", "#jump-to-nav",
+            ".mw-jump-link"
         ]
         for selector in bad_selectors:
             for element in soup.select(selector):
@@ -56,6 +68,11 @@ class WikiProcessor:
         # 4. 后处理
         # 清理 data-sort-value (Wiki 常见的冗余属性)
         content_markdown = re.sub(r'data-sort-value="[^"]*"', '', content_markdown)
+        
+        # 针对 MediaWiki 的一些残留文本进行清理
+        content_markdown = content_markdown.replace("跳到导航", "").replace("跳到搜索", "")
+        content_markdown = content_markdown.replace("来自Stardew Valley Wiki", "")
+        
         # 清理多余空行
         content_markdown = re.sub(r'\n{3,}', '\n\n', content_markdown)
         content_markdown = content_markdown.strip()
@@ -75,7 +92,24 @@ class WikiProcessor:
         print(f"Processing {category}/{os.path.basename(raw_path)}...")
         markdown = self.html_to_markdown(raw_data["html_body"])
         
-        header = f"---\ntitle: {raw_data['title']}\ncategory: {category}\nurl: {raw_data['url']}\nscraped_at: {raw_data['scraped_at']}\n---\n\n"
+        # 构建元数据头部
+        header_lines = [
+            "---",
+            f"title: {raw_data['title']}",
+            f"category: {category}",
+            f"url: {raw_data['url']}"
+        ]
+        
+        # 如果存在旧版本的 zh_title 或 zh_url，依然可以兼容显示，但新抓取的数据已经合并到 title/url 中
+        if raw_data.get("zh_title"):
+            header_lines.append(f"zh_title: {raw_data['zh_title']}")
+        if raw_data.get("zh_url"):
+            header_lines.append(f"zh_url: {raw_data['zh_url']}")
+            
+        header_lines.append(f"scraped_at: {raw_data['scraped_at']}")
+        header_lines.append("---\n\n")
+        
+        header = "\n".join(header_lines)
         
         md_filename = os.path.basename(raw_path).replace(".json", ".md")
         md_path = os.path.join(target_dir, md_filename)
