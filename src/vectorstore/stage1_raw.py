@@ -163,27 +163,54 @@ class WikiRawCrawler:
             print(f"Request failed for {title}: {e}")
             return None
 
-    def file_exists(self, title: str, category: str) -> bool:
-        """检查指定标题的文件是否已存在"""
-        safe_category = re.sub(r'[\\/*?:"<>|]', "_", category)
+    def find_existing_file(self, title: str) -> Optional[str]:
+        """全局检查指定标题的文件是否已在任何分类中存在，并返回路径"""
         safe_title = title.replace(" ", "_").replace("/", "_").replace(":", "_").replace("?", "_")
-        file_path = os.path.join(self.storage_dir, safe_category, f"{safe_title}.json")
-        return os.path.exists(file_path)
+        filename = f"{safe_title}.json"
+        for root, dirs, files in os.walk(self.storage_dir):
+            if filename in files:
+                return os.path.join(root, filename)
+        return None
 
     def save_raw(self, data: Dict):
-        """按分类存储为 JSON"""
-        category = data.get("category", "Uncategorized")
-        # 清理分类名中的非法字符（用于文件夹名）
-        safe_category = re.sub(r'[\\/*?:"<>|]', "_", category)
-        category_dir = os.path.join(self.storage_dir, safe_category)
-        if not os.path.exists(category_dir):
-            os.makedirs(category_dir)
+        """按分类存储为 JSON，如果已存在则合并 category"""
+        new_category = data.get("category", "Uncategorized")
+        title = data["title"]
+        
+        existing_path = self.find_existing_file(title)
+        
+        if existing_path:
+            # 合并逻辑
+            with open(existing_path, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+            
+            old_categories = existing_data.get("category", "Uncategorized")
+            # 统一转为列表处理
+            if isinstance(old_categories, str):
+                cat_list = [c.strip() for c in old_categories.split(",")]
+            else:
+                cat_list = old_categories
+            
+            if new_category not in cat_list:
+                cat_list.append(new_category)
+                existing_data["category"] = ", ".join(cat_list) # 以逗号分隔存储
+                with open(existing_path, "w", encoding="utf-8") as f:
+                    json.dump(existing_data, f, ensure_ascii=False, indent=2)
+                print(f"Updated categories for '{title}' in {existing_path}: {existing_data['category']}")
+            else:
+                print(f"'{title}' already has category '{new_category}', skipping update.")
+        else:
+            # 常规保存逻辑
+            safe_category = re.sub(r'[\\/*?:"<>|]', "_", new_category)
+            category_dir = os.path.join(self.storage_dir, safe_category)
+            if not os.path.exists(category_dir):
+                os.makedirs(category_dir)
 
-        safe_title = data["title"].replace(" ", "_").replace("/", "_").replace(":", "_").replace("?", "_")
-        file_path = os.path.join(category_dir, f"{safe_title}.json")
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"Saved raw data to {file_path}")
+            safe_title = title.replace(" ", "_").replace("/", "_").replace(":", "_").replace("?", "_")
+            file_path = os.path.join(category_dir, f"{safe_title}.json")
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print(f"Saved raw data to {file_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 1: Raw Crawler")
@@ -202,9 +229,12 @@ if __name__ == "__main__":
     if args.all:
         print("--- Stage 1: Raw (Priority Categories with recursion) ---")
         # 核心分类清单
+        # start_categories = [
+        #     "Crops", "NPCs", "Artisan Goods", "Fish", "Mining", 
+        #     "Skills", "Bundles", "Locations", "Monsters", "Game mechanics", "Gameplay"
+        # ]
         start_categories = [
-            "Crops", "Villagers", "Artisan Goods", "Fish", "Mining", 
-            "Skills", "Bundles", "Locations", "Monsters", "Quests", "Events"
+            "NPCs","Game mechanics","Gameplay","Festivals","Seasons"
         ]
     else:
         start_categories = [args.category or "Crops"]
@@ -225,9 +255,14 @@ if __name__ == "__main__":
                 if not args.force and title in scraped_titles:
                     continue
                 
-                # 跨运行文件检查：如果非 force 模式且文件已存在，则跳过
-                if not args.force and crawler.file_exists(title, category=cat_name):
-                    print(f"  Skipping '{title}' (already exists in {cat_name})")
+                # 跨运行/全局重复检查
+                existing_path = crawler.find_existing_file(title)
+                if not args.force and existing_path:
+                    # 如果已经存在，我们依然尝试“保存”，让 save_raw 处理元数据合并
+                    # 这样可以更新 category 标签而不需要重新 fetch_raw_content
+                    # 构造一个极简数据用于合并
+                    minimal_data = {"title": title, "category": cat_name}
+                    crawler.save_raw(minimal_data)
                     scraped_titles.add(title)
                     count += 1
                     continue

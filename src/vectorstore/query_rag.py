@@ -1,10 +1,11 @@
 import os
+import re
 import time
 from typing import List
 from langchain_chroma import Chroma  
 from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
+from vectorstore import get_markdown_splitter, MAX_BATCH_SIZE
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
 from dotenv import load_dotenv
@@ -26,12 +27,8 @@ class WikiVectorStore:
             embedding_function=self.embeddings,
             collection_name="stardew_wiki"
         )
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            is_separator_regex=False,
-        )
+        # 使用统一配置的 Markdown 文本分割器
+        self.text_splitter = get_markdown_splitter()
 
     def _init_embeddings(self, max_retries: int = 3):
         """
@@ -43,7 +40,7 @@ class WikiVectorStore:
                 # 使用 SiliconFlow 提供的 BAAI/bge-m3 模型
                 # 设置 chunk_size=64 以符合 SiliconFlow 的 Batch Size 限制 (报错 413)
                 return OpenAIEmbeddings(
-                    model="BAAI/bge-m3",
+                    model="BAAI/bge-large-zh-v1.5",
                     openai_api_key=os.getenv("SILICONFLOW_API_KEY"),
                     openai_api_base=os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1"),
                     chunk_size=64
@@ -56,20 +53,134 @@ class WikiVectorStore:
         
         raise last_exception
 
-    def add_documents(self, text: str, metadata: dict):
+    def add_prechunked_documents(self, chunks: List[str], metadata: dict):
         """
-        对文本进行分块并存入向量库。
+        直接将预分块的内容（已清洗）存入向量库。
+        增加单次上传的分块数量限制 (MAX_BATCH_SIZE)。
         """
-        doc = Document(page_content=text, metadata=metadata)
-        chunks = self.text_splitter.split_documents([doc])
-        self.vector_db.add_documents(chunks)
-        print(f"Added {len(chunks)} chunks to vector store for {metadata.get('title', 'Unknown')}")
+        title = metadata.get("title", "未知标题")
+        final_docs = []
+        
+        for chunk_clean in chunks:
+            # 使用统一的注入格式 [页面标题: xxx]
+            content_for_vector = f"[页面标题: {title}]\n内容: {chunk_clean}"
+            final_docs.append(Document(
+                page_content=content_for_vector,
+                metadata={
+                    **metadata,
+                    "original_markdown": chunk_clean,
+                    "title": title
+                }
+            ))
+        
+        if final_docs:
+            # 分批提交以满足 batch size 限制
+            for i in range(0, len(final_docs), MAX_BATCH_SIZE):
+                batch = final_docs[i:i + MAX_BATCH_SIZE]
+                self.vector_db.add_documents(batch)
+                print(f"Added batch of {len(batch)} documents to vector store for {title} ({i//MAX_BATCH_SIZE + 1}/{(len(final_docs)-1)//MAX_BATCH_SIZE + 1})")
+
+    async def aadd_prechunked_documents(self, chunks: List[str], metadata: dict):
+        """
+        异步将预分块的内容（已清洗）存入向量库。
+        增加单次上传的分块数量限制 (MAX_BATCH_SIZE)。
+        """
+        title = metadata.get("title", "未知标题")
+        final_docs = []
+        
+        for chunk_clean in chunks:
+            # 使用统一的注入格式 [页面标题: xxx]
+            content_for_vector = f"[页面标题: {title}]\n内容: {chunk_clean}"
+            final_docs.append(Document(
+                page_content=content_for_vector,
+                metadata={
+                    **metadata,
+                    "original_markdown": chunk_clean,
+                    "title": title
+                }
+            ))
+        
+        if final_docs:
+            # 分批提交以满足 batch size 限制
+            for i in range(0, len(final_docs), MAX_BATCH_SIZE):
+                batch = final_docs[i:i + MAX_BATCH_SIZE]
+                await self.vector_db.aadd_documents(batch)
+                print(f"Added batch of {len(batch)} documents to vector store for {title} ({i//MAX_BATCH_SIZE + 1}/{(len(final_docs)-1)//MAX_BATCH_SIZE + 1})")
 
     def similarity_search(self, query: str, k: int = 4) -> List[Document]:
         """
         相似度搜索。
         """
         return self.vector_db.similarity_search(query, k=k)
+
+    def similarity_search_with_score(self, query: str, k: int = 4):
+        """
+        相似度搜索并返回得分。
+        """
+        return self.vector_db.similarity_search_with_relevance_scores(query, k=k)
+
+    def rerank(self, query: str, documents: List[Document], top_n: int = 5) -> List[Document]:
+        """
+        使用 BAAI/bge-reranker-v2-m3 对文档进行重排序。
+        """
+        if not documents:
+            return []
+
+        import requests
+        api_key = os.getenv("SILICONFLOW_API_KEY")
+        api_base = os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1")
+        url = f"{api_base}/rerank"
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 准备重排序请求
+        payload = {
+            "model": "BAAI/bge-reranker-v2-m3",
+            "query": query,
+            "documents": [doc.page_content for doc in documents],
+            "top_n": top_n
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            
+            reranked_docs = []
+            for item in result.get("results", []):
+                index = item["index"]
+                doc = documents[index]
+                # 将分数存入 metadata 以供参考
+                doc.metadata["rerank_score"] = item["relevance_score"]
+                reranked_docs.append(doc)
+            
+            return reranked_docs
+        except Exception as e:
+            print(f"Reranking failed: {e}")
+            # 如果重排序失败，返回原始文档的前 top_n 个
+            return documents[:top_n]
+
+    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30) -> List[Document]:
+        """
+        执行混合检索并使用重排序。
+        1. BM25 + Vector 混合检索获取 initial_k 个结果
+        2. 使用 Reranker 获取最终的 k 个结果
+        """
+        retriever = self.get_hybrid_retriever(k=initial_k)
+        initial_docs = retriever.invoke(query)
+        
+        # 去重（如果 BM25 和 Vector 返回了相同的文档，虽然 EnsembleRetriever 通常会处理，但双重保险）
+        seen_contents = set()
+        unique_docs = []
+        for doc in initial_docs:
+            if doc.page_content not in seen_contents:
+                unique_docs.append(doc)
+                seen_contents.add(doc.page_content)
+        
+        return self.rerank(query, unique_docs, top_n=k)
 
     def get_hybrid_retriever(self, k: int = 4) -> EnsembleRetriever:
         """
@@ -90,11 +201,19 @@ class WikiVectorStore:
         bm25_retriever = BM25Retriever.from_documents(all_docs)
         bm25_retriever.k = k
         
-        vector_retriever = self.vector_db.as_retriever(search_kwargs={"k": k})
+        # 启用带相关性得分的向量检索
+        # 注意：Chroma 的 similarity_search_with_relevance_scores 预设返回 0-1
+        # 但某些 Embedding 模型或距离函数可能超出此范围。这里使用普通的 similarity 检索
+        # 以避免 LangChain 的 score_threshold 警告/过滤，或者改用 mmr
+        vector_retriever = self.vector_db.as_retriever(
+            search_kwargs={
+                "k": k
+            }
+        )
         
         ensemble_retriever = EnsembleRetriever(
             retrievers=[bm25_retriever, vector_retriever],
-            weights=[0.3, 0.7] # 向量检索权重更高
+            weights=[0.7, 0.3]
         )
         return ensemble_retriever
 

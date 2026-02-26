@@ -28,4 +28,5 @@ Thumbs.db
 .env
 *.log
 data/
-vectorstore/db/
+/vectorstore/
+/.langgraph_api

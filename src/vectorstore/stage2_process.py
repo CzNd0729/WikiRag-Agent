@@ -29,6 +29,21 @@ class WikiProcessor:
             pass
 
         # 1. 预清洗：移除绝对不需要的元素
+        # 移除“作物生长日历”板块及其表格
+        # 在星露谷 Wiki 中，这通常是一个 span id="作物生长日历" 后面紧跟一个表格
+        for header in soup.find_all(['h2', 'h3', 'h4']):
+            if "作物生长日历" in header.get_text():
+                # 寻找接下来的表格或特定容器并移除
+                curr = header.next_sibling
+                while curr:
+                    next_node = curr.next_sibling
+                    # 如果遇到了下一个同级标题，停止移除
+                    if curr.name in ['h2', 'h3', 'h4']:
+                        break
+                    curr.extract()
+                    curr = next_node
+                header.decompose()
+
         # 移除编辑链接
         for edit_section in soup.find_all('span', class_='mw-editsection'):
             edit_section.decompose()
@@ -84,19 +99,25 @@ class WikiProcessor:
         with open(raw_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
         
-        category = raw_data.get("category", "Uncategorized")
-        target_dir = os.path.join(self.processed_dir, category)
+        # 兼容处理：category 可能已经是逗号分隔的字符串
+        raw_category = raw_data.get("category", "Uncategorized")
+        if isinstance(raw_category, str):
+            first_category = raw_category.split(",")[0].strip()
+        else:
+            first_category = "Uncategorized"
+
+        target_dir = os.path.join(self.processed_dir, first_category)
         if not os.path.exists(target_dir):
             os.makedirs(target_dir)
 
-        print(f"Processing {category}/{os.path.basename(raw_path)}...")
+        print(f"Processing {first_category}/{os.path.basename(raw_path)}...")
         markdown = self.html_to_markdown(raw_data["html_body"])
         
         # 构建元数据头部
         header_lines = [
             "---",
             f"title: {raw_data['title']}",
-            f"category: {category}",
+            f"category: {raw_category}",
             f"url: {raw_data['url']}"
         ]
         
