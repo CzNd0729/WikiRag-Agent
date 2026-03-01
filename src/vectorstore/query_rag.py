@@ -8,6 +8,9 @@ from langchain_core.documents import Document
 from vectorstore import get_markdown_splitter, MAX_BATCH_SIZE
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -163,14 +166,53 @@ class WikiVectorStore:
             # 如果重排序失败，返回原始文档的前 top_n 个
             return documents[:top_n]
 
-    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30) -> List[Document]:
+    def rewrite_query(self, query: str) -> str:
+        """
+        使用 LLM 改写查询词，以提高召回率。
+        """
+        llm = ChatOpenAI(
+            model="deepseek-chat",
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            temperature=0
+        )
+        
+        system_prompt = (
+            "你是一个星露谷物语百科检索专家。你的任务是根据用户的提问，生成一个最适合在百科中检索的关键词或短句。"
+            "你应该：\n"
+            "1. 提取核心实体（作物、NPC、机制等）。\n"
+            "2. 如果用户描述模糊，尝试将其转化为游戏中的专业术语。\n"
+            "3. 只输出改写后的文本，不要有任何多余的解释。"
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", "{query}")
+        ])
+        
+        chain = prompt | llm | StrOutputParser()
+        
+        try:
+            rewritten_query = chain.invoke({"query": query})
+            print(f"Query Rewritten: '{query}' -> '{rewritten_query}'")
+            return rewritten_query
+        except Exception as e:
+            print(f"Query rewriting failed: {e}")
+            return query
+
+    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30, use_rewrite: bool = True) -> List[Document]:
         """
         执行混合检索并使用重排序。
-        1. BM25 + Vector 混合检索获取 initial_k 个结果
-        2. 使用 Reranker 获取最终的 k 个结果
+        1. (可选) 使用 LLM 进行查询改写
+        2. BM25 + Vector 混合检索获取 initial_k 个结果
+        3. 使用 Reranker 获取最终的 k 个结果
         """
+        search_query = query
+        if use_rewrite:
+            search_query = self.rewrite_query(query)
+
         retriever = self.get_hybrid_retriever(k=initial_k)
-        initial_docs = retriever.invoke(query)
+        initial_docs = retriever.invoke(search_query)
         
         # 去重（如果 BM25 和 Vector 返回了相同的文档，虽然 EnsembleRetriever 通常会处理，但双重保险）
         seen_contents = set()
@@ -180,7 +222,7 @@ class WikiVectorStore:
                 unique_docs.append(doc)
                 seen_contents.add(doc.page_content)
         
-        return self.rerank(query, unique_docs, top_n=k)
+        return self.rerank(search_query, unique_docs, top_n=k)
 
     def get_hybrid_retriever(self, k: int = 4) -> EnsembleRetriever:
         """

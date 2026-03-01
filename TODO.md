@@ -1,43 +1,32 @@
 # Sentinel-Wiki 项目开发任务清单 (TODO.md)
 
-## 📅 第一阶段：MCP 服务器开发 (核心优先级)
-> **目标**: 构建符合 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 标准规范的本地感知层，实现对《星露谷物语》存档的安全、标准化访问。
+## 🏗 第一阶段：基础设施与 MCP 协议集成 (已完成)
+- [x] **MCP 基础架构搭建**: 初始化 Python 环境并配置 MCP SDK 依赖。
+- [x] **存档解析逻辑实现 (`src/mcp_servers/parser_utils.py`)**: 针对 `SaveGame` XML 结构的稳健解析。
+- [x] **标准 MCP Tools 定义 (`src/mcp_servers/stardew_mcp.py`)**: 实现 `get_player_status`, `get_inventory`, `get_social_info`, `get_farm_map`。
+- [x] **安全性与只读访问**: 确保存档数据完整性。
 
-- [x] **MCP 基础架构搭建**
-    - [x] 初始化符合 MCP 标准的 Python 开发环境。
-    - [x] 配置 `mcp` 核心 SDK 依赖。
-- [x] **存档解析逻辑实现 (`mcp_servers/parser_utils.py`)**
-    - [x] 实现针对 `SaveGame` XML 结构的稳健解析器。
-    - [x] 封装基础数据提取函数（金钱、日期、农场类型等）。
-- [x] **定义标准 MCP Tools (`mcp_servers/stardew_mcp.py`)**
-    - [x] `get_player_status`: 返回玩家基础属性（符合 MCP Tool 定义规范）。
-    - [x] `get_inventory`: 递归扫描背包与储物箱数据。
-    - [x] `get_social_info`: 提取 NPC 好感度及送礼历史。
-    - [x] `get_farm_map`: 解析农作物生长状态。
-- [x] **安全性与性能优化**
-    - [x] 实现只读访问控制，确保不修改用户原始存档。
-    - [x] 增加错误处理机制，处理 XML 解析异常。
+## 🚀 第二阶段：高性能 RAG 架构优化 (进行中)
+- [x] **基础 RAG 构建**: 基于 Chroma 的向量存储与 BM25 混合检索。
+- [ ] **集成 LLM 查询改写**: 在检索前利用 LLM 将用户口语转化为精准检索词。
+- [ ] **Reranker 语义重排**: 接入 BGE-Reranker v2-m3 对初步检索结果进行精准排序。
+- [ ] **自适应文本分块**: 优化 Markdown 切分策略，提升长文档召回率。
 
-## 📅 第二阶段：知识检索层 (RAG Layer)
-- [x] **Wiki 数据采集**
-    - [x] 编写基于 BeautifulSoup/MediaWiki API 的爬虫。
-    - [x] 结构化处理《星露谷物语》Wiki 页面。
-- [x] **向量化与存储**
-    - [x] 集成 Qdrant 或 Chroma 向量数据库。
-    - [x] 实现文本分块（Chunking）与向量嵌入（Embedding）脚本。
-- [x] **检索优化**
-    - [x] 实现混合检索（BM25 + 向量检索）。
+## 🧠 第三阶段：多智能体工作流编排 (核心重点)
+- [ ] **LangGraph 状态机重构**:
+    - [ ] 定义严谨的 Node（协调器、Wiki 专家、存档专家、自反思节点）。
+    - [ ] 实现基于消息的状态转移逻辑，抑制幻觉。
+- [ ] **高可靠闭环设计**:
+    - [ ] 引入结构化数据契约 (Pydantic) 约束 Agent 输出。
+    - [ ] 增加失败兜底与自纠错机制。
+- [ ] **长会话上下文管理**:
+    - [ ] 实现基于摘要的消息压缩中间件。
+    - [ ] 优化超长对话中的意图追踪。
 
-## 📅 第三阶段：Agent 逻辑编排
-- [ ] **LangChain 核心构建**
-    - [ ] 定义 ReAct 思考循环模板。
-    - [ ] 集成 MCP 工具集到 LangChain Toolbelt。
-- [ ] **Prompt 工程**
-    - [ ] 编写针对游戏场景的 System Prompts。
-- [ ] **端到端测试**
-    - [ ] 验证 "Wiki 知识 + 存档现状" 的联合推理逻辑。
-
-## 📅 第四阶段：通用化扩展
-- [ ] **多游戏支持框架**
-    - [ ] 抽象 MCP Server 基类。
-    - [ ] 文档化扩展流程。
+## 📊 第四阶段：全链路评测与部署 (闭环)
+- [ ] **接入 LangSmith**: 配置 Trace 追踪，分析推理全链路耗时与质量。
+- [ ] **评测工程**:
+    - [ ] 构建自动化评测集（包含 50+ 复杂问答案例）。
+    - [ ] 迭代 Prompt 策略，使意图识别率达到 95% 以上。
+- [ ] **部署与通用化**:
+    - [ ] 封装单文件启动入口，支持快速扩展至其他游戏场景。
