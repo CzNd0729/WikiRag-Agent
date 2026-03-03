@@ -40,12 +40,11 @@ class WikiVectorStore:
         last_exception = None
         for i in range(max_retries):
             try:
-                # 使用 SiliconFlow 提供的 BAAI/bge-m3 模型
-                # 设置 chunk_size=64 以符合 SiliconFlow 的 Batch Size 限制 (报错 413)
+                # 从环境变量读取 Embedding 配置
                 return OpenAIEmbeddings(
-                    model="BAAI/bge-large-zh-v1.5",
-                    openai_api_key=os.getenv("SILICONFLOW_API_KEY"),
-                    openai_api_base=os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1"),
+                    model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5"),
+                    openai_api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("SILICONFLOW_API_KEY")),
+                    openai_api_base=os.getenv("EMBEDDING_API_BASE", "https://api.siliconflow.cn/v1"),
                     chunk_size=64
                 )
             except Exception as e:
@@ -124,14 +123,16 @@ class WikiVectorStore:
 
     def rerank(self, query: str, documents: List[Document], top_n: int = 5) -> List[Document]:
         """
-        使用 BAAI/bge-reranker-v2-m3 对文档进行重排序。
+        对文档进行重排序。
         """
         if not documents:
             return []
 
         import requests
-        api_key = os.getenv("SILICONFLOW_API_KEY")
-        api_base = os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1")
+        # 从环境变量读取 Reranker 配置
+        api_key = os.getenv("RERANKER_API_KEY", os.getenv("SILICONFLOW_API_KEY"))
+        api_base = os.getenv("RERANKER_API_BASE", "https://api.siliconflow.cn/v1")
+        model = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
         url = f"{api_base}/rerank"
 
         headers = {
@@ -141,7 +142,7 @@ class WikiVectorStore:
         
         # 准备重排序请求
         payload = {
-            "model": "BAAI/bge-reranker-v2-m3",
+            "model": model,
             "query": query,
             "documents": [doc.page_content for doc in documents],
             "top_n": top_n
@@ -170,18 +171,19 @@ class WikiVectorStore:
         """
         使用 LLM 改写查询词，以提高召回率。
         """
+        # 从环境变量读取 RAG 改写 LLM 配置
         llm = ChatOpenAI(
-            model="deepseek-chat",
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            model=os.getenv("RAG_REWRITE_MODEL", "deepseek-chat"),
+            api_key=os.getenv("RAG_REWRITE_API_KEY", os.getenv("DEEPSEEK_API_KEY")),
+            base_url=os.getenv("RAG_REWRITE_API_BASE", "https://api.deepseek.com"),
             temperature=0
         )
         
         system_prompt = (
-            "你是一个星露谷物语百科检索专家。你的任务是根据用户的提问，生成一个最适合在百科中检索的关键词或短句。"
+            "你是一个百科知识检索专家。你的任务是根据用户的提问，生成一个最适合在知识库中检索的关键词或短句。"
             "你应该：\n"
-            "1. 提取核心实体（作物、NPC、机制等）。\n"
-            "2. 如果用户描述模糊，尝试将其转化为游戏中的专业术语。\n"
+            "1. 提取核心实体、概念或技术术语。\n"
+            "2. 去除口语化的修饰词，保留具有检索价值的关键词。\n"
             "3. 只输出改写后的文本，不要有任何多余的解释。"
         )
         

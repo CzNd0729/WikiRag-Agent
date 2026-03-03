@@ -1,57 +1,46 @@
-# 🎮 Project: Sentinel-Wiki (Game-Aware RAG Agent)
+# 🎮 Project: Sentinel-Wiki (Universal General-Aware RAG Agent)
 
-**Sentinel-Wiki** 是一个基于 **LangGraph** 和 **MCP (Model Context Protocol)** 构建的高性能、高可靠游戏智能管家。它通过“Wiki 提供全局知识，存档提供玩家现状，Agent 负责逻辑对齐”的核心逻辑，为玩家提供深度个性化的游戏决策支持。
-
----
-
-## 🎯 核心完成目标
-
--   **多智能体工作流编排**: 使用 **LangGraph** 构建基于状态机的异步协作流，通过定义严谨的状态节点与转移逻辑，将复杂业务解耦为可预测的任务链，有效抑制长链条推理中的幻觉现象，提升工程确定性。
--   **高可靠 Agent 闭环设计**: 设计完备的自反思与失败兜底机制，利用结构化数据契约约束模型输出，实现了从意图识别到工具调用的全链路自动化闭环。
--   **高性能 RAG 架构优化**: 构建了集成 LLM 查询改写的高性能 RAG 管线，基于 **Chroma** 实现向量与 BM25 的混合召回。通过 **Reranker** 语义重排与自适应文本分块策略，在非结构化百科知识库上实现了 90% 以上的上下文召回率。
--   **长会话与上下文管理**: 利用摘要中间件对历史对话进行语义提取与压缩，有效解决了 LLM 窗口限制导致的早期意图丢失问题，减少约 40% 的 token 消耗，支持超长会话的稳定上下文追踪。
--   **基于 MCP 协议的工具集成**: 利用 **MCP SDK** 开发高性能本地插件，实现对异构存档数据（如 XML/二进制）的自动化扫描与结构化映射，打通了 LLM 与私有数据环境的交互通路。
--   **全链路追踪与评测工程**: 接入 **LangSmith** 建立全生命周期监控，深度分析从意图解析到最终交付的 Trace 记录，通过自动化评测集迭代 Prompt 策略，意图识别成功率提升达 95%。
+**Sentinel-Wiki** 是一个基于 **LangGraph** 和 **MCP (Model Context Protocol)** 构建的高性能通用百科智能管家。
 
 ---
 
-## 🛠 技术栈 (Tech Stack)
+## 🏗 第三阶段：多智能体工作流编排 (已完成)
 
--   **语言**: Python
--   **Agent 框架**: LangGraph (状态机编排), LangChain
--   **大模型**: Claude 3.5 Sonnet / DeepSeek-V3
--   **向量数据库**: Chroma
--   **检索优化**: BGE-Reranker (BAAI/bge-reranker-v2-m3), BM25
--   **本地感知**: MCP SDK (Model Context Protocol)
--   **监控评测**: LangSmith
+项目已通过 LangGraph 实现了一个具备**意图识别、自动化检索、自我反思与长会话摘要**能力的通用 Agent 框架。
 
----
-
-## 🌟 首个落地案例：星露谷物语 (Stardew Valley)
-
-本项目首选星露谷物语作为原型实现，因为它拥有极高价值的 Wiki 数据和易于解析的 XML 存档。
-
-### 核心 MCP 工具集
-1.  **`get_player_status`**: 获取玩家当前金钱、当前季节、日期及农场类型。
-2.  **`get_inventory`**: 扫描玩家背包及所有储物箱（Chests）中的物品。
-3.  **`get_social_info`**: 读取 NPC 好感度状态及送礼记录。
-4.  **`get_farm_map`**: 分析农场土地上已种植的作物及其生长进度。
+### 核心特性
+- **通用百科适配**: 提示词和逻辑均已脱离特定游戏，可应用于任何 Markdown 知识库。
+- **高可靠闭环**: 引入 Reflector 节点对回答质量进行实时质检，不合格则自动触发重新检索。
+- **多模型配置**: 支持在 `.env` 中为不同节点（RAG 改写、Agent 决策、Embedding）配置不同的 Provider（DeepSeek, Qwen, SiliconFlow 等）。
+- **JSON 强制输出**: 修复了 OpenAI 400 报错，通过 Prompt 约束和模型参数确保结构化输出的稳定性。
 
 ---
 
-## 📂 项目结构
+## 📂 项目结构 (Project Structure)
+
+本项目的目录组织遵循**业务逻辑优先**原则，确保模块的高内聚与低耦合。
 
 ```bash
 ├── src/
-│   ├── agents/
-│   │   ├── reasoning_engine.py  # LangGraph Agent 核心逻辑
-│   │   ├── prompts.py           # 结构化 Prompt 定义
-│   │   └── memory.py            # 摘要中间件实现
-│   ├── mcp_servers/
-│   │   ├── stardew_mcp.py       # 星露谷物语 MCP Server
-│   │   └── parser_utils.py      # 存档解析工具
-│   ├── vectorstore/
-│   │   ├── ingest_pipeline.py   # RAG 数据入库管线
-│   │   └── query_rag.py         # 混合检索与重排逻辑
-└── tests/                       # 自动化评测集
+│   ├── core/                # 核心通用引擎
+│   │   ├── agent_graph.py    # LangGraph 状态机编排逻辑
+│   │   ├── rag_engine.py     # 集成改写与重排的通用检索引擎
+│   │   └── llm_provider.py   # 多模型与多 Provider 适配层
+│   ├── agents/              # 业务 Agent 定义
+│   │   ├── reasoning_engine.py # 对外交互入口与测试脚本
+│   │   ├── prompts.py        # 通用百科 System Prompts (JSON 格式)
+│   │   └── schemas.py        # Pydantic 消息契约与状态定义
+│   ├── mcp_servers/         # 实时数据环境接入 (MCP 协议)
+│   │   ├── stardew_mcp.py    # 存档接入示例
+│   │   └── parser_utils.py   # 结构化解析工具
+│   └── vectorstore/         # 数据持久化层
+│       └── query_rag.py      # 基础向量库操作
+└── tests/                   # 自动化评测
 ```
+
+---
+
+## 🛠 快速开始
+
+1. **配置环境变量**: 复制 `.env.example` 为 `.env` 并填入相应的 API Key。
+2. **启动 Agent**: 运行 `python src/agents/reasoning_engine.py` 进行交互式测试。
