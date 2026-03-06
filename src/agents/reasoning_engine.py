@@ -5,7 +5,7 @@ async def main():
     config = {"configurable": {"thread_id": "test_user_123"}}
     
     # 模拟复杂问题
-    question = "冬季有什么适合种植的作物？"
+    question = "哪些角色会去星之果实酒吧"
     
     print(f"User: {question}\n")
     
