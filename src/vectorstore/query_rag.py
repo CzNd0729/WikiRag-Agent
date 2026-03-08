@@ -3,7 +3,7 @@ import re
 import time
 from typing import List
 from langchain_chroma import Chroma  
-from langchain_openai import OpenAIEmbeddings
+from core.llm_provider import get_embedding_model
 from langchain_core.documents import Document
 from vectorstore import get_markdown_splitter, MAX_BATCH_SIZE
 from langchain_community.retrievers import BM25Retriever
@@ -22,38 +22,17 @@ class WikiVectorStore:
     def __init__(self, persist_directory: str = "vectorstore/db"):
         self.persist_directory = persist_directory
         
-        # 带有重试机制的 Embedding 初始化
-        self.embeddings = self._init_embeddings()
+        # 使用全局统一的 Embedding 配置
+        self.embeddings = get_embedding_model()
         
         self.vector_db = Chroma(
             persist_directory=persist_directory,
             embedding_function=self.embeddings,
-            collection_name="stardew_wiki"
+            collection_name="stardew_wiki",
+            collection_metadata={"hnsw:space": "cosine"} # 显式指定使用余弦相似度
         )
         # 使用统一配置的 Markdown 文本分割器
         self.text_splitter = get_markdown_splitter()
-
-    def _init_embeddings(self, max_retries: int = 3):
-        """
-        初始化 Embedding 模型，包含简单的重试逻辑。
-        """
-        last_exception = None
-        for i in range(max_retries):
-            try:
-                # 从环境变量读取 Embedding 配置
-                return OpenAIEmbeddings(
-                    model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5"),
-                    openai_api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("SILICONFLOW_API_KEY")),
-                    openai_api_base=os.getenv("EMBEDDING_API_BASE", "https://api.siliconflow.cn/v1"),
-                    chunk_size=64
-                )
-            except Exception as e:
-                last_exception = e
-                print(f"Embedding initialization failed (attempt {i+1}/{max_retries}): {e}. Waiting 5s...")
-                if i < max_retries - 1:
-                    time.sleep(5)
-        
-        raise last_exception
 
     def add_prechunked_documents(self, chunks: List[str], metadata: dict):
         """

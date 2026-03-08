@@ -1,85 +1,39 @@
 import os
 from typing import List
 from langchain_core.documents import Document
-from core.llm_provider import get_chat_model, get_embedding_model
-from langchain_chroma import Chroma
-from langchain_community.retrievers import BM25Retriever
-from langchain_classic.retrievers import EnsembleRetriever
-import requests
+from vectorstore.query_rag import WikiVectorStore
 
 class RAGEngine:
     """
     通用的 RAG 检索引擎，集成了查询改写、混合检索和重排序。
+    直接封装了 WikiVectorStore 的高级检索能力。
     """
     def __init__(self, collection_name: str = "stardew_wiki"):
-        self.embeddings = get_embedding_model()
-        self.vector_db = Chroma(
-            persist_directory=os.getenv("VECTOR_DB_DIR", "vectorstore/db"),
-            embedding_function=self.embeddings,
-            collection_name=collection_name
-        )
-        self.rewrite_llm = get_chat_model("RAG_REWRITE")
-
-    async def rewrite_query(self, query: str) -> str:
-        """
-        利用 LLM 改写用户查询为精准检索词。
-        """
-        system_prompt = (
-            "你是一个百科检索专家。请将用户的问题改写为一个最适合在知识库中进行语义检索的关键词或短句。"
-            "请以 JSON 格式输出改写后的结果：{\"rewritten_query\": \"...\"}"
-        )
-        try:
-            # 简化链调用，直接使用 LLM 的 JSON 输出能力
-            response = await self.rewrite_llm.ainvoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ])
-            import json
-            data = json.loads(response.content)
-            return data.get("rewritten_query", query)
-        except Exception as e:
-            print(f"RAG Rewrite failed: {e}")
-            return query
-
-    def rerank(self, query: str, documents: List[Document], top_n: int = 5) -> List[Document]:
-        """
-        利用外部 Reranker API 进行重排序。
-        """
-        if not documents:
-            return []
-
-        api_key = os.getenv("RERANKER_API_KEY")
-        api_base = os.getenv("RERANKER_API_BASE")
-        model = os.getenv("RERANKER_MODEL")
-        
-        if not api_key or not api_base:
-            return documents[:top_n]
-
-        try:
-            response = requests.post(
-                f"{api_base}/rerank",
-                json={
-                    "model": model,
-                    "query": query,
-                    "documents": [doc.page_content for doc in documents],
-                    "top_n": top_n
-                },
-                headers={"Authorization": f"Bearer {api_key}"}
-            )
-            result = response.json()
-            return [documents[item["index"]] for item in result.get("results", [])]
-        except Exception as e:
-            print(f"Rerank failed: {e}")
-            return documents[:top_n]
+        # WikiVectorStore 内部已处理了 Embedding 和 Chroma 初始化
+        self.vdb = WikiVectorStore()
 
     async def search(self, query: str, k: int = 5) -> List[Document]:
         """
         混合检索入口。
+        封装了：
+        1. Query 改写 (Rewrite)
+        2. Hybrid Search (Vector + BM25)
+        3. Rerank (BGE-Reranker)
         """
-        rewritten = await self.rewrite_query(query)
+        # 由于 WikiVectorStore 的混合检索目前是同步实现（Reranker 使用 requests），
+        # 在异步环境中使用 run_in_executor 或直接调用。
+        # 这里为了保持一致性，先直接调用，未来可根据性能需求优化为全异步。
+        import asyncio
+        loop = asyncio.get_event_loop()
         
-        # 简单混合检索示例 (实际可根据需要使用 EnsembleRetriever)
-        # 这里为了演示，先只使用向量检索
-        initial_docs = await self.vector_db.asimilarity_search(rewritten, k=20)
-        
-        return self.rerank(rewritten, initial_docs, top_n=k)
+        # 使用 hybrid_search_with_rerank 执行全链路检索
+        return await loop.run_in_executor(
+            None, 
+            self.vdb.hybrid_search_with_rerank, 
+            query, 
+            k
+        )
+
+    def search_sync(self, query: str, k: int = 5) -> List[Document]:
+        """同步检索接口"""
+        return self.vdb.hybrid_search_with_rerank(query, k=k)
