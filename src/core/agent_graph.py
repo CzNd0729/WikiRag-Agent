@@ -2,7 +2,7 @@ import os
 import json
 from typing import Annotated, List, Union, Dict, Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, trim_messages
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -14,7 +14,8 @@ from mcp_servers.stardew_mcp import get_player_status, get_inventory
 from agents.prompts import (
     COORDINATOR_PROMPT, 
     REFLECTOR_PROMPT, 
-    SUMMARIZER_PROMPT
+    SUMMARIZER_PROMPT,
+    FINAL_GENERATOR_PROMPT
 )
 from agents.schemas import AgentAction, ReflectorAnalysis, FinalResponse, AgentState
 
@@ -25,9 +26,33 @@ rag = RAGEngine()
 
 @tool
 async def search_wiki(query: str):
-    """检索知识库。"""
+    """检索知识库。返回分块内容及其对应的原始文件路径(source)。"""
     docs = await rag.search(query, k=5)
-    return "\n\n".join([f"[{doc.metadata.get('title', 'Knowledge')}] {doc.page_content}" for doc in docs])
+    results = []
+    for doc in docs:
+        title = doc.metadata.get('title', 'Knowledge')
+        source = doc.metadata.get('source', 'Unknown')
+        results.append(f"[{title}] (Source: {source})\n{doc.page_content}")
+    return "\n\n".join(results)
+
+@tool
+async def read_full_wiki(source_path: str):
+    """读取完整的原始 Wiki Markdown 文本。source_path 应从 search_wiki 的结果中获取。"""
+    try:
+        # 安全检查：确保只能读取 data/processed 或 data/raw 目录下的文件
+        normalized_path = os.path.normpath(source_path)
+        if not (normalized_path.startswith("data" + os.sep + "processed") or 
+                normalized_path.startswith("data" + os.sep + "raw")):
+             return f"Error: Unauthorized path access: {source_path}"
+             
+        if not os.path.exists(normalized_path):
+            return f"Error: File not found: {source_path}"
+            
+        with open(normalized_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return content
+    except Exception as e:
+        return f"Error reading file: {e}"
 
 @tool
 async def get_context_status():
@@ -55,8 +80,6 @@ async def coordinator(state: AgentState):
     if summary:
         prompt += f"\n\nContext Summary: {summary}"
         
-    # 为了让 ToolNode 正常工作，我们需要生成一个包含 tool_calls 的 AIMessage
-    # 同时为了满足 JSON 强约束，我们依然保留之前的逻辑分析意图
     response = await llm.ainvoke([
         SystemMessage(content=prompt),
         *messages
@@ -69,7 +92,6 @@ async def coordinator(state: AgentState):
         if action.tool_name == "none":
             return {"next_node": "final_generator", "messages": [response]}
         
-        # 核心修复：手动构造包含 tool_calls 的 AIMessage
         tool_call_id = f"call_{action.tool_name}"
         ai_msg = AIMessage(
             content=response.content,
@@ -114,23 +136,18 @@ async def reflector(state: AgentState):
 async def final_generator(state: AgentState):
     """最终回答生成。"""
     context_str = "\n".join(state["context"])
-    
-    # 由于全局启用了 JSON 模式，这里必须要求 JSON 输出
-    # 我们使用 with_structured_output 来自动处理 Prompt 注入
     llm_with_final = llm.with_structured_output(FinalResponse)
     
     prompt = [
-        SystemMessage(content="你是一个专业的百科问答整合者。请基于提供的上下文信息，为用户生成一个准确、详尽且易于理解的最终回答。请务必以 JSON 格式输出。"),
+        SystemMessage(content=FINAL_GENERATOR_PROMPT),
         HumanMessage(content=f"已收集的背景知识与环境状态:\n{context_str}\n\n当前用户问题:\n{state['messages'][-1].content}")
     ]
     
     try:
         response = await llm_with_final.ainvoke(prompt)
-        # 将结构化结果转为友好的文本展示
         answer_text = f"{response.answer}\n\n📚 参考来源: {', '.join(response.sources) if response.sources else '内置知识库'}\n💡 建议操作: {' | '.join(response.actionable_tips) if response.actionable_tips else '无'}"
         return {"messages": [AIMessage(content=answer_text)]}
     except Exception as e:
-        # 兜底逻辑：如果结构化解析失败，尝试带 JSON 关键词的普通调用
         fallback_prompt = "请基于以下上下文回答用户问题。请以 JSON 格式输出，包含 'answer' 字段。\n\n上下文：" + context_str
         resp = await llm.ainvoke([
             SystemMessage(content=fallback_prompt),
@@ -139,19 +156,26 @@ async def final_generator(state: AgentState):
         return {"messages": [resp]}
 
 async def summarizer(state: AgentState):
-    """会话压缩。"""
+    """会话管理：自动裁剪过长历史并生成摘要。"""
+    trimmed_messages = trim_messages(
+        state["messages"],
+        strategy="last",
+        token_counter=len, # 粗略计数
+        max_tokens=4000,
+        start_on="human",
+        include_system=True
+    )
+    
     if len(state["messages"]) < 10:
-        # 即使不压缩，也返回状态中的空消息增量，避免返回空字典导致某些下游处理器异常
         return {"messages": []}
-        
+
     response = await llm.ainvoke([
         SystemMessage(content=SUMMARIZER_PROMPT),
-        HumanMessage(content=str(state["messages"]))
+        HumanMessage(content=str(trimmed_messages))
     ])
     
     return {
-        "summary": response.content,
-        "messages": state["messages"][-2:] # 仅保留最后两轮
+        "summary": response.content
     }
 
 # 4. 架构编排
@@ -164,7 +188,7 @@ def build_graph():
     workflow.add_node("final_generator", final_generator)
     workflow.add_node("summarizer", summarizer)
     
-    tools = [search_wiki, get_context_status, get_context_details]
+    tools = [search_wiki, read_full_wiki, get_context_status, get_context_details]
     tool_node = ToolNode(tools)
     workflow.add_node("tools", tool_node)
     

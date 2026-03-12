@@ -181,12 +181,12 @@ class WikiVectorStore:
             print(f"Query rewriting failed: {e}")
             return query
 
-    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30, use_rewrite: bool = True) -> List[Document]:
+    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30, use_rewrite: bool = False) -> List[Document]:
         """
         执行混合检索并使用重排序。
-        1. (可选) 使用 LLM 进行查询改写
-        2. BM25 + Vector 混合检索获取 initial_k 个结果
-        3. 使用 Reranker 获取最终的 k 个结果
+        1. BM25 + Vector 混合检索获取 initial_k 个结果
+        2. 使用 Reranker 获取最终的 k 个结果
+        （注意：已禁用内部 rewrite_query，改为完全依赖上层 Agent 的查询改写能力）
         """
         search_query = query
         if use_rewrite:
@@ -236,7 +236,7 @@ class WikiVectorStore:
         
         ensemble_retriever = EnsembleRetriever(
             retrievers=[bm25_retriever, vector_retriever],
-            weights=[0.7, 0.3]
+            weights=[0.3, 0.7]
         )
         return ensemble_retriever
 

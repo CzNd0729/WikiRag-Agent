@@ -5,10 +5,10 @@ import operator
 
 class AgentAction(BaseModel):
     """Agent 建议执行的下一个动作。"""
-    tool_name: Literal["search_wiki", "get_context_status", "get_context_details", "none"] = Field(
+    tool_name: Literal["search_wiki", "read_full_wiki", "get_context_status", "get_context_details", "none"] = Field(
         description="建议使用的工具名称。如果不需要工具，则为 none。"
     )
-    query: Optional[str] = Field(description="工具的输入参数，例如搜索关键词。")
+    query: Optional[str] = Field(description="工具的输入参数，例如搜索关键词或文件路径。")
     reason: str = Field(description="选择该动作的原因。")
 
 class ReflectorAnalysis(BaseModel):
