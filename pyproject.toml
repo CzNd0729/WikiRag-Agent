@@ -25,7 +25,8 @@ dependencies = [
     "langchain-google-genai>=1.0.0",
     "langchain-ollama>=0.2.0",
     "langgraph>=0.2.0",
-    "langgraph-checkpoint>=1.0.0"
+    "langgraph-checkpoint>=1.0.0",
+    "langsmith>=0.1.0"
 ]
 
 [project.optional-dependencies]

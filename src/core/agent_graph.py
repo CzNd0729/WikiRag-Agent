@@ -85,6 +85,9 @@ async def coordinator(state: AgentState):
         *messages
     ])
     
+    # [LOG] 打印 LLM 原始输出
+    print(f"\n[Coordinator RAW LLM Output]:\n{response.content}\n")
+    
     try:
         data = json.loads(response.content)
         action = AgentAction(**data)
@@ -108,6 +111,9 @@ async def coordinator(state: AgentState):
             "context": [f"Action: {action.tool_name} for {action.query} (Reason: {action.reason})"]
         }
     except Exception as e:
+        # [LOG] 打印详细错误信息和导致错误的原始文本
+        print(f"\n[Coordinator Parse Error]: {e}")
+        print(f"FAILED CONTENT: {response.content}\n")
         return {"next_node": "coordinator", "context": [f"Error: Prompt format invalid or tool call failed. {e}"]}
 
 async def reflector(state: AgentState):
@@ -196,7 +202,8 @@ def build_graph():
     
     workflow.add_conditional_edges("coordinator", lambda x: x["next_node"], {
         "tools": "tools",
-        "final_generator": "final_generator"
+        "final_generator": "final_generator",
+        "coordinator": "coordinator"
     })
     
     workflow.add_edge("tools", "reflector")
