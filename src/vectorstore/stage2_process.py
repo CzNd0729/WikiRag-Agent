@@ -21,12 +21,18 @@ class WikiProcessor:
         soup = BeautifulSoup(html_content, "lxml")
         
         # 0. 尝试只提取正文容器内容，如果存在
-        # MediaWiki 的正文通常在 #mw-content-text 或 #content 中
-        content_div = soup.select_one("#mw-content-text") or soup.select_one("#content")
-        if content_div:
-            # 使用 content_div 作为新的 soup 根，但这可能会丢失标题
-            # 为了保留标题，我们可以只移除已知的侧边栏和页眉页脚
-            pass
+        # 针对通用网页，尝试查找常见的正文容器
+        main_content = None
+        main_selectors = ["article", "main", ".main-content", "#main-content", ".post-content", "#mw-content-text", "#content"]
+        for selector in main_selectors:
+            found = soup.select_one(selector)
+            if found:
+                main_content = found
+                break
+        
+        # 如果找到了核心内容区域，为了减少噪音，我们只处理这个区域
+        if main_content:
+            soup = BeautifulSoup(str(main_content), "lxml")
 
         # 1. 预清洗：移除绝对不需要的元素
         # 移除“作物生长日历”板块及其表格
@@ -50,12 +56,13 @@ class WikiProcessor:
             
         # 移除脚本、样式、空元素、引用包装、侧边栏/导航等
         bad_selectors = [
-            "script", "style", ".mw-empty-elt", "div.mw-references-wrap",
+            "script", "style", "nav", "footer", "header", "aside",
+            ".mw-empty-elt", "div.mw-references-wrap",
             "#toc", ".toc", ".navbox", "#navbox", ".catlinks", "#footer", "#header",
             "#mw-navigation", "#mw-head", "#mw-panel", "#p-navigation", "#p-tb", "#p-lang",
             ".printfooter", ".noprint", "#p-personal", "#p-search", "#p-cactions", "#p-variants", "#p-views",
             "#siteSub", "#contentSub", "#jump-to-nav",
-            ".mw-jump-link"
+            ".mw-jump-link", ".sidebar", ".menu", ".nav", ".footer", ".header"
         ]
         for selector in bad_selectors:
             for element in soup.select(selector):

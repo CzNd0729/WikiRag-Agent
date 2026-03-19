@@ -3,9 +3,127 @@ from bs4 import BeautifulSoup
 import json
 import os
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from datetime import datetime
 import argparse
+from urllib.parse import urljoin, urlparse
+import time
+
+class UniversalWebCrawler:
+    """
+    通用网页爬虫：从指定的起点 URL 开始，递归抓取同域名下的所有链接。
+    """
+    def __init__(self, storage_dir: str = "data/raw"):
+        self.storage_dir = storage_dir
+        if not os.path.exists(storage_dir):
+            os.makedirs(storage_dir)
+        self.visited_urls = set()
+        self.domain = ""
+
+    def is_internal(self, url: str) -> bool:
+        """检查 URL 是否属于同一个域名"""
+        parsed_url = urlparse(url)
+        return parsed_url.netloc == self.domain or parsed_url.netloc == ""
+
+    def get_safe_filename(self, url: str) -> str:
+        """从 URL 生成安全的文件名"""
+        parsed_url = urlparse(url)
+        path = parsed_url.path
+        if not path or path == "/":
+            return "index.json"
+        
+        # 移除末尾斜杠
+        path = path.strip("/")
+        # 替换非法字符
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", path)
+        return f"{safe_name}.json"
+
+    def fetch_page(self, url: str) -> Optional[Dict]:
+        """抓取网页内容"""
+        try:
+            print(f"  Fetching: {url}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            # 检查是否为 HTML
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" not in content_type:
+                print(f"  Skipping non-HTML content: {content_type}")
+                return None
+
+            soup = BeautifulSoup(response.text, "lxml")
+            title = soup.title.string if soup.title else url
+            
+            return {
+                "title": title.strip(),
+                "url": url,
+                "html_body": response.text,
+                "scraped_at": datetime.now().isoformat(),
+                "category": "Web"
+            }
+        except Exception as e:
+            print(f"  Failed to fetch {url}: {e}")
+            return None
+
+    def extract_links(self, html: str, base_url: str) -> List[str]:
+        """提取页面中所有的内部链接"""
+        soup = BeautifulSoup(html, "lxml")
+        links = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            full_url = urljoin(base_url, href)
+            # 移除片段标识符
+            full_url = full_url.split("#")[0]
+            
+            if self.is_internal(full_url) and full_url not in self.visited_urls:
+                # 排除一些明显不是页面的资源
+                if not any(full_url.lower().endswith(ext) for ext in [".pdf", ".jpg", ".png", ".zip", ".docx"]):
+                    links.append(full_url)
+        return list(set(links))
+
+    def save_raw(self, data: Dict):
+        """保存原始数据"""
+        category_dir = os.path.join(self.storage_dir, "Universal")
+        if not os.path.exists(category_dir):
+            os.makedirs(category_dir)
+
+        filename = self.get_safe_filename(data["url"])
+        file_path = os.path.join(category_dir, filename)
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"  Saved to {file_path}")
+
+    def crawl(self, start_url: str, max_depth: int = 3, limit: int = 100):
+        """递归爬取"""
+        self.domain = urlparse(start_url).netloc
+        queue = [(start_url, 0)]
+        count = 0
+
+        while queue and count < limit:
+            current_url, depth = queue.pop(0)
+            
+            if current_url in self.visited_urls or depth > max_depth:
+                continue
+            
+            self.visited_urls.add(current_url)
+            data = self.fetch_page(current_url)
+            
+            if data:
+                self.save_raw(data)
+                count += 1
+                
+                if depth < max_depth:
+                    new_links = self.extract_links(data["html_body"], current_url)
+                    for link in new_links:
+                        if link not in self.visited_urls:
+                            queue.append((link, depth + 1))
+            
+            # 礼貌延迟
+            time.sleep(0.5)
 
 class WikiRawCrawler:
     """
