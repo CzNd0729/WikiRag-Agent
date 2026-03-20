@@ -1,7 +1,24 @@
-from typing import List, Optional, Literal, Annotated, TypedDict
+from typing import List, Optional, Literal, Annotated, TypedDict, Union
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, ToolMessage
 import operator
+
+def update_messages(left: List[BaseMessage], right: Union[BaseMessage, List[BaseMessage]]) -> List[BaseMessage]:
+    """
+    自定义消息更新逻辑。
+    如果收到 ToolMessage，将其过滤掉（因为它会被存入 context），
+    只保留 HumanMessage 和 AIMessage (对话记录)。
+    """
+    if not isinstance(right, list):
+        right = [right]
+    
+    new_messages = left.copy()
+    for msg in right:
+        # 过滤掉工具输出消息，这些内容会存入 context 而非对话历史
+        if isinstance(msg, ToolMessage):
+            continue
+        new_messages.append(msg)
+    return new_messages
 
 class AgentAction(BaseModel):
     """Agent 建议执行的下一个动作。"""
@@ -25,8 +42,8 @@ class FinalResponse(BaseModel):
 
 class AgentState(TypedDict):
     """LangGraph 状态定义。"""
-    # 消息列表，支持累加
-    messages: Annotated[List[BaseMessage], operator.add]
+    # 消息列表，只保留用户与 AI 的对话记录
+    messages: Annotated[List[BaseMessage], update_messages]
     # 当前对话摘要（长会话管理）
     summary: str
     # 专家收集到的原始背景知识或实时环境片段

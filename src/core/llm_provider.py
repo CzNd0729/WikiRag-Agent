@@ -67,7 +67,6 @@ def get_chat_model(model_key: str = "AGENT_LLM"):
         temperature=0,
         max_retries=3,
         timeout=60,
-        model_kwargs={"response_format": {"type": "json_object"}} if "deepseek" in model.lower() or "qwen" in model.lower() else {}
     )
 
 def get_embedding_model():

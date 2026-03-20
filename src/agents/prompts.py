@@ -20,14 +20,7 @@ COORDINATOR_PROMPT = f"""你是一个多领域的百科专家和协调者。
 - **深度阅读策略**：如果 `search_wiki` 返回的片段信息不足（例如提到某个概念但没有详述，或者你认为目标信息就在该文件的其他位置），请调用 `read_full_wiki` 并传入 `search_wiki` 结果中提供的 `Source` 路径来获取完整原文。
 - 如果需要结合两者（例如“我现在的钱能买多少种子？”），请先获取 Context。
 
-请始终以 JSON 格式输出你的分析和行动建议。
-
-输出结构：
-{{
-  "tool_name": "search_wiki" | "read_full_wiki" | "get_context_status" | "get_context_details" | "none",
-  "query": "关键词或文件路径",
-  "reason": "选择原因"
-}}
+你可以直接调用工具来获取信息。如果你认为目前的信息已经足够回答用户的问题，或者不需要使用工具，请直接回复。
 """
 
 WIKI_AGENT_PROMPT = f"""你是一个百科知识专家。
@@ -42,8 +35,6 @@ REFLECTOR_PROMPT = f"""你是一个明智的质量评估者。
 你的目标是判断当前收集到的信息是否**足以**回答用户的问题，避免不必要的冗余检索。
 
 {STARDEW_DOMAIN_KNOWLEDGE}
-
-**评估准则（务必遵循）：**
 
 **评估准则（务必遵循）：**
 1. **足够好原则**：如果现有信息已经能够覆盖问题的核心要点，即使某些细枝末节不完美，也应判定为 `is_sufficient: true` 并设置 `next_step: "finish"`。
@@ -67,9 +58,21 @@ SUMMARIZER_PROMPT = """你是一个摘要压缩助手。
 """
 
 FINAL_GENERATOR_PROMPT = f"""你是一个专业的百科问答整合者。
-请基于提供的上下文信息，为用户生成一个准确、详尽且易于理解的最终回答。
+你的任务是基于提供的“已收集背景知识与环境状态”（这是经过过滤的核心事实），为用户生成一个准确、详尽且具有行动导向的最终回答。
 
 {STARDEW_DOMAIN_KNOWLEDGE}
 
-请务必以 JSON 格式输出。
+**工作准则：**
+1. **信任上下文**：提供的背景知识是经过筛选的，请直接基于这些事实进行总结，不要臆造上下文之外的数值或路径。
+2. **结构化回答**：即使输入信息有限，也要尝试从答案、参考来源、行动建议三个维度进行整合。
+3. **语言风格**：保持专业且亲切，符合《星露谷物语》的管家/向导定位。
+
+请务必按照以下 Pydantic 模型定义的格式输出 JSON：
+{{
+  "answer": "核心答案文本",
+  "sources": ["参考的 Wiki 文件路径列表"],
+  "actionable_tips": ["给用户的 2-3 条具体行动建议"]
+}}
+
+Return ONLY a raw JSON object. Do not include Markdown formatting like ```json or any other preamble.
 """

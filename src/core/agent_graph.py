@@ -6,7 +6,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import ToolMessage
 
 from core.llm_provider import get_chat_model
 from core.rag_engine import RAGEngine
@@ -68,8 +68,40 @@ async def get_context_details():
 # 2. 模型工厂
 
 llm = get_chat_model("AGENT_LLM")
+# 绑定原生工具
+tools = [search_wiki, read_full_wiki, get_context_status, get_context_details]
+llm_with_tools = llm.bind_tools(tools)
 
 # 3. Graph 节点逻辑
+
+async def tools_node(state: AgentState):
+    """自定义工具调用节点。执行工具并直接将结果写入 context，而不是 messages。"""
+    last_message = state["messages"][-1]
+    
+    # 获取 llm 建议的工具调用
+    tool_calls = getattr(last_message, "tool_calls", [])
+    if not tool_calls:
+        return {"next_node": "final_generator"}
+    
+    new_contexts = []
+    # 建立工具映射
+    tool_map = {tool.name: tool for tool in tools}
+    
+    for tool_call in tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+        
+        if tool_name in tool_map:
+            result = await tool_map[tool_name].ainvoke(tool_args)
+            # 将结果加入 context 而不是发送 ToolMessage 到 messages
+            new_contexts.append(f"Tool [{tool_name}] output:\n{result}")
+        else:
+            new_contexts.append(f"Error: Tool {tool_name} not found.")
+            
+    return {
+        "context": new_contexts,
+        "next_node": "reflector"
+    }
 
 async def coordinator(state: AgentState):
     """任务分发与协调。"""
@@ -80,41 +112,27 @@ async def coordinator(state: AgentState):
     if summary:
         prompt += f"\n\nContext Summary: {summary}"
         
-    response = await llm.ainvoke([
-        SystemMessage(content=prompt),
-        *messages
-    ])
+    # 构建请求消息列表
+    req_messages = [SystemMessage(content=prompt)]
+    # 如果有 context，注入作为短期记忆参考
+    if state.get("context"):
+        context_str = "\n".join(state["context"])
+        req_messages.append(SystemMessage(content=f"已收集的信息:\n{context_str}"))
     
-    # [LOG] 打印 LLM 原始输出
-    print(f"\n[Coordinator RAW LLM Output]:\n{response.content}\n")
+    req_messages.extend(messages)
+        
+    response = await llm_with_tools.ainvoke(req_messages)
     
-    try:
-        data = json.loads(response.content)
-        action = AgentAction(**data)
-        
-        if action.tool_name == "none":
-            return {"next_node": "final_generator", "messages": [response]}
-        
-        tool_call_id = f"call_{action.tool_name}"
-        ai_msg = AIMessage(
-            content=response.content,
-            tool_calls=[{
-                "id": tool_call_id,
-                "name": action.tool_name,
-                "args": {"query": action.query} if action.query else {}
-            }]
-        )
-        
+    if response.tool_calls:
+        # 模型决定调用工具
         return {
             "next_node": "tools",
-            "messages": [ai_msg],
-            "context": [f"Action: {action.tool_name} for {action.query} (Reason: {action.reason})"]
+            "messages": [response],
+            "context": [f"Action: 调用工具 {tc['name']} 参数 {tc['args']}" for tc in response.tool_calls]
         }
-    except Exception as e:
-        # [LOG] 打印详细错误信息和导致错误的原始文本
-        print(f"\n[Coordinator Parse Error]: {e}")
-        print(f"FAILED CONTENT: {response.content}\n")
-        return {"next_node": "coordinator", "context": [f"Error: Prompt format invalid or tool call failed. {e}"]}
+    
+    # 无需工具，直接生成最终回答
+    return {"next_node": "final_generator", "messages": [response]}
 
 async def reflector(state: AgentState):
     """结果反思与质检。"""
@@ -190,13 +208,10 @@ def build_graph():
     workflow = StateGraph(AgentState)
     
     workflow.add_node("coordinator", coordinator)
+    workflow.add_node("tools", tools_node) # 使用自定义 tools_node
     workflow.add_node("reflector", reflector)
     workflow.add_node("final_generator", final_generator)
     workflow.add_node("summarizer", summarizer)
-    
-    tools = [search_wiki, read_full_wiki, get_context_status, get_context_details]
-    tool_node = ToolNode(tools)
-    workflow.add_node("tools", tool_node)
     
     workflow.set_entry_point("coordinator")
     
