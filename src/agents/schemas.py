@@ -32,6 +32,7 @@ class ReflectorAnalysis(BaseModel):
     """反思节点生成的分析。"""
     is_sufficient: bool = Field(description="当前收集的信息是否足以回答用户问题。")
     critique: str = Field(description="如果不足，说明缺失的信息；如果充足，说明改进建议。")
+    relevant_indices: List[int] = Field(default=[], description="与回答用户提问直接相关的 context 片段序号列表。")
     next_step: Literal["continue", "finish"] = Field(description="下一步是继续检索还是结束生成。")
 
 class FinalResponse(BaseModel):
@@ -47,6 +48,7 @@ class AgentState(TypedDict):
     # 当前对话摘要（长会话管理）
     summary: str
     # 专家收集到的原始背景知识或实时环境片段
+    # 使用 Annotated[List[str], operator.add] 可能会导致冗余，但在 reflector 节点我们会手动覆盖或重整它
     context: Annotated[List[str], operator.add]
     # 下一个目标节点
     next_node: str

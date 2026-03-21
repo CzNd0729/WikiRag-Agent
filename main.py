@@ -59,16 +59,13 @@ async def run_chat(args):
         "context": []
     }
     
-    async for output in graph.astream(inputs, config=config):
-        for node, data in output.items():
-            print(f"--- Node: {node} ---")
-            if "messages" in data and len(data["messages"]) > 0:
-                msg = data["messages"][-1]
-                print(msg.content)
-            elif "context" in data:
-                for ctx in data["context"]:
-                    print(f"[Context] {ctx}")
-            print("-" * 20)
+    # 使用 stream_mode="messages" 获取流式消息输出，针对 final_generator 节点
+    async for msg, metadata in graph.astream(inputs, config=config, stream_mode="messages"):
+        if metadata.get("langgraph_node") == "final_generator":
+            # 只有在 final_generator 节点才打印内容
+            print(msg.content, end="", flush=True)
+    print("\n")
+    print("-" * 20)
 
 async def run_eval():
     """启动评测套件"""

@@ -75,7 +75,7 @@ llm_with_tools = llm.bind_tools(tools)
 # 3. Graph 节点逻辑
 
 async def tools_node(state: AgentState):
-    """自定义工具调用节点。执行工具并直接将结果写入 context，而不是 messages。"""
+    """自定义工具调用节点。执行工具并直接将结果写入 context，并附带序号。"""
     last_message = state["messages"][-1]
     
     # 获取 llm 建议的工具调用
@@ -83,20 +83,23 @@ async def tools_node(state: AgentState):
     if not tool_calls:
         return {"next_node": "final_generator"}
     
+    # 计算当前已有的 context 数量，作为起始序号
+    start_idx = len(state.get("context", []))
+    
     new_contexts = []
     # 建立工具映射
     tool_map = {tool.name: tool for tool in tools}
     
-    for tool_call in tool_calls:
+    for i, tool_call in enumerate(tool_calls):
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
         if tool_name in tool_map:
             result = await tool_map[tool_name].ainvoke(tool_args)
-            # 将结果加入 context 而不是发送 ToolMessage 到 messages
-            new_contexts.append(f"Tool [{tool_name}] output:\n{result}")
+            # 格式化输出，带上序号
+            new_contexts.append(f"[{start_idx + i}] Tool [{tool_name}] output:\n{result}")
         else:
-            new_contexts.append(f"Error: Tool {tool_name} not found.")
+            new_contexts.append(f"[{start_idx + i}] Error: Tool {tool_name} not found.")
             
     return {
         "context": new_contexts,
@@ -135,16 +138,21 @@ async def coordinator(state: AgentState):
     return {"next_node": "final_generator", "messages": [response]}
 
 async def reflector(state: AgentState):
-    """结果反思与质检。"""
+    """结果反思与质检。根据序号筛选相关的 context。"""
     context_str = "\n".join(state["context"])
     
     response = await llm.ainvoke([
         SystemMessage(content=REFLECTOR_PROMPT),
-        HumanMessage(content=f"Collected: {context_str}\n\nTask: {state['messages'][0].content}")
+        HumanMessage(content=f"Collected Content (with IDs):\n{context_str}\n\nUser Question: {state['messages'][-1].content}")
     ])
     
     try:
-        data = json.loads(response.content)
+        # 去除可能存在的 markdown 格式
+        content = response.content.strip()
+        if content.startswith("```json"):
+            content = content[7:-3].strip()
+        
+        data = json.loads(content)
         analysis = ReflectorAnalysis(**data)
         
         if analysis.next_step == "continue" and state["reflection_count"] < 3:
@@ -153,31 +161,62 @@ async def reflector(state: AgentState):
                 "reflection_count": state["reflection_count"] + 1,
                 "context": [f"Reflect: {analysis.critique}"]
             }
-        return {"next_node": "final_generator"}
-    except:
+        
+        # 将筛选出的序号存入 context 标记中
+        indices_str = ",".join(map(str, analysis.relevant_indices))
+        refined_marker = f"SELECTED_INDICES: {indices_str}"
+        return {
+            "next_node": "final_generator",
+            "context": [refined_marker]
+        }
+    except Exception as e:
+        print(f"Reflector error: {e}")
         return {"next_node": "final_generator"}
 
 async def final_generator(state: AgentState):
-    """最终回答生成。"""
-    context_str = "\n".join(state["context"])
-    llm_with_final = llm.with_structured_output(FinalResponse)
+    """最终回答生成。根据 Reflector 筛选的序号组装上下文。"""
+    # 查找是否有筛选出的序号 (SELECTED_INDICES)
+    selected_indices = []
+    for item in reversed(state["context"]):
+        if item.startswith("SELECTED_INDICES: "):
+            indices_str = item.replace("SELECTED_INDICES: ", "", 1)
+            if indices_str:
+                try:
+                    selected_indices = [int(idx.strip()) for idx in indices_str.split(",")]
+                except:
+                    pass
+            break
+            
+    if selected_indices:
+        # 根据序号提取对应的 context 片段
+        # 注意：我们需要匹配片段开头的 [ID]
+        refined_parts = []
+        for idx in selected_indices:
+            prefix = f"[{idx}] "
+            for ctx in state["context"]:
+                if ctx.startswith(prefix):
+                    refined_parts.append(ctx)
+                    break
+        context_to_use = "\n".join(refined_parts)
+    else:
+        # 回退逻辑：如果没有序号或解析失败，使用全部 context
+        context_to_use = "\n".join(state["context"])
+    
+    # 为了流式输出文本，我们不再强制使用 structured output，
+    # 而是让模型在 SystemMessage 的指导下直接输出最终文本。
+    # 这样用户可以直接在前端流式渲染。
     
     prompt = [
-        SystemMessage(content=FINAL_GENERATOR_PROMPT),
-        HumanMessage(content=f"已收集的背景知识与环境状态:\n{context_str}\n\n当前用户问题:\n{state['messages'][-1].content}")
+        SystemMessage(content=FINAL_GENERATOR_PROMPT + "\n\n请直接输出回答内容，不要包含 JSON 格式包裹。"),
+        HumanMessage(content=f"已收集的背景知识与环境状态:\n{context_to_use}\n\n当前用户问题:\n{state['messages'][-1].content}")
     ]
     
-    try:
-        response = await llm_with_final.ainvoke(prompt)
-        answer_text = f"{response.answer}\n\n📚 参考来源: {', '.join(response.sources) if response.sources else '内置知识库'}\n💡 建议操作: {' | '.join(response.actionable_tips) if response.actionable_tips else '无'}"
-        return {"messages": [AIMessage(content=answer_text)]}
-    except Exception as e:
-        fallback_prompt = "请基于以下上下文回答用户问题。请以 JSON 格式输出，包含 'answer' 字段。\n\n上下文：" + context_str
-        resp = await llm.ainvoke([
-            SystemMessage(content=fallback_prompt),
-            *state["messages"]
-        ])
-        return {"messages": [resp]}
+    # 调用 astream 获取流式消息
+    # 在 LangGraph 中，节点返回的是对状态的最终更新，
+    # 但我们可以通过 graph.astream(..., stream_mode="messages") 来获取流式输出。
+    # 这里的节点逻辑只需要返回最终结果。
+    response = await llm.ainvoke(prompt)
+    return {"messages": [response]}
 
 async def summarizer(state: AgentState):
     """会话管理：自动裁剪过长历史并生成摘要。"""

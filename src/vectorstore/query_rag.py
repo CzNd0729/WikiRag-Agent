@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
+from core.config import DEFAULT_RAG_CONFIG
 
 load_dotenv()
 
@@ -100,7 +101,7 @@ class WikiVectorStore:
         """
         return self.vector_db.similarity_search_with_relevance_scores(query, k=k)
 
-    def rerank(self, query: str, documents: List[Document], top_n: int = 5) -> List[Document]:
+    def rerank(self, query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
         """
         对文档进行重排序。
         """
@@ -181,18 +182,20 @@ class WikiVectorStore:
             print(f"Query rewriting failed: {e}")
             return query
 
-    def hybrid_search_with_rerank(self, query: str, k: int = 5, initial_k: int = 30, use_rewrite: bool = False) -> List[Document]:
+    def hybrid_search_with_rerank(self, query: str, k: int = None, initial_k: int = None, use_rewrite: bool = False) -> List[Document]:
         """
         执行混合检索并使用重排序。
-        1. BM25 + Vector 混合检索获取 initial_k 个结果
-        2. 使用 Reranker 获取最终的 k 个结果
-        （注意：已禁用内部 rewrite_query，改为完全依赖上层 Agent 的查询改写能力）
+        配置参数具有最高优先级。
         """
+        # 优先级：配置文件 > 调用参数 (如果配置文件中有定义)
+        target_k = DEFAULT_RAG_CONFIG.final_top_k if DEFAULT_RAG_CONFIG.final_top_k is not None else k
+        target_initial_k = DEFAULT_RAG_CONFIG.initial_top_k if DEFAULT_RAG_CONFIG.initial_top_k is not None else initial_k
+
         search_query = query
         if use_rewrite:
             search_query = self.rewrite_query(query)
 
-        retriever = self.get_hybrid_retriever(k=initial_k)
+        retriever = self.get_hybrid_retriever(k=target_initial_k)
         initial_docs = retriever.invoke(search_query)
         
         # 去重（如果 BM25 和 Vector 返回了相同的文档，虽然 EnsembleRetriever 通常会处理，但双重保险）
@@ -203,11 +206,12 @@ class WikiVectorStore:
                 unique_docs.append(doc)
                 seen_contents.add(doc.page_content)
         
-        return self.rerank(search_query, unique_docs, top_n=k)
+        return self.rerank(search_query, unique_docs, top_n=target_k)
 
     def get_hybrid_retriever(self, k: int = 4) -> EnsembleRetriever:
         """
         构建混合检索器 (BM25 + Vector)。
+        从配置文件读取权重。
         """
         # 获取所有文档以构建 BM25 索引
         # 注意：在生产环境中，BM25 索引应持久化或按需加载
@@ -236,7 +240,7 @@ class WikiVectorStore:
         
         ensemble_retriever = EnsembleRetriever(
             retrievers=[bm25_retriever, vector_retriever],
-            weights=[0.3, 0.7]
+            weights=[DEFAULT_RAG_CONFIG.bm25_weight, DEFAULT_RAG_CONFIG.vector_weight]
         )
         return ensemble_retriever
 

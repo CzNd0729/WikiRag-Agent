@@ -48,6 +48,7 @@ REFLECTOR_PROMPT = f"""你是一个明智的质量评估者。
 {{
   "is_sufficient": true | false,
   "critique": "简洁的评估理由，如果充足请说明‘信息已足够’",
+  "relevant_indices": [0, 1, 2], // 包含与回答用户提问直接相关的 context 片段序号列表。
   "next_step": "continue" | "finish"
 }}
 """
