@@ -23,6 +23,7 @@
 ```bash
 ├── main.py                  # 统一程序入口 (对话/评测)
 ├── src/
+│   ├── server.py            # LangServe 部署入口
 │   ├── core/                # 核心通用引擎
 │   │   ├── agent_graph.py    # LangGraph 状态机编排逻辑
 │   │   ├── rag_engine.py     # 集成改写与重排的通用检索引擎
@@ -51,3 +52,6 @@
 2. **启动 Agent**: 运行 `python main.py chat` 进入交互式对话。
 3. **运行评测**: 运行 `python main.py eval` 执行自动化性能评估。
    - 评测完成后，控制台将输出 LangSmith 实验报告链接，可前往云端查看详细的 LLM as a Judge 评分与推理 Trace。
+4. **LangServe 部署**:
+   - 运行 `python src/server.py` 启动 API 服务。
+   - 访问 `http://localhost:8000/agent/playground/` 进行可视化交互。

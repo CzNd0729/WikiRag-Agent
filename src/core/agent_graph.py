@@ -299,6 +299,7 @@ def build_graph():
     workflow.add_edge("final_generator", "summarizer")
     workflow.add_edge("summarizer", END)
     
-    return workflow.compile(checkpointer=MemorySaver())
+    # return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile()
 
 graph = build_graph()
