@@ -26,14 +26,19 @@ rag = RAGEngine()
 
 @tool
 async def search_wiki(query: str):
-    """检索知识库。返回分块内容及其对应的原始文件路径(source)。"""
+    """检索知识库。返回分块内容及其对应的原始文件路径(source)。结果将以列表形式返回，供 Reflector 筛选。"""
     docs = await rag.search(query, k=5)
     results = []
     for doc in docs:
         title = doc.metadata.get('title', 'Knowledge')
         source = doc.metadata.get('source', 'Unknown')
-        results.append(f"[{title}] (Source: {source})\n{doc.page_content}")
-    return "\n\n".join(results)
+        results.append({
+            "title": title,
+            "source": source,
+            "content": doc.page_content
+        })
+    # 返回 JSON 字符串，以便 tools_node 处理
+    return json.dumps(results)
 
 @tool
 async def read_full_wiki(source_path: str):
@@ -75,7 +80,7 @@ llm_with_tools = llm.bind_tools(tools)
 # 3. Graph 节点逻辑
 
 async def tools_node(state: AgentState):
-    """自定义工具调用节点。执行工具并直接将结果写入 context，并附带序号。"""
+    """自定义工具调用节点。执行工具并直接将结果写入 context。仅 Wiki 检索结果带序号。"""
     last_message = state["messages"][-1]
     
     # 获取 llm 建议的工具调用
@@ -83,23 +88,45 @@ async def tools_node(state: AgentState):
     if not tool_calls:
         return {"next_node": "final_generator"}
     
-    # 计算当前已有的 context 数量，作为起始序号
-    start_idx = len(state.get("context", []))
-    
     new_contexts = []
     # 建立工具映射
     tool_map = {tool.name: tool for tool in tools}
     
-    for i, tool_call in enumerate(tool_calls):
+    # 获取当前已有的最大 WIKI 序号
+    current_max_idx = -1
+    for ctx in state.get("context", []):
+        if ctx.startswith("[WIKI_"):
+            try:
+                idx = int(ctx.split("_")[1].split("]")[0])
+                current_max_idx = max(current_max_idx, idx)
+            except:
+                pass
+    
+    wiki_idx_counter = current_max_idx + 1
+    
+    for tool_call in tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         
         if tool_name in tool_map:
             result = await tool_map[tool_name].ainvoke(tool_args)
-            # 格式化输出，带上序号
-            new_contexts.append(f"[{start_idx + i}] Tool [{tool_name}] output:\n{result}")
+            
+            if tool_name == "search_wiki":
+                # 解析 Wiki 检索结果列表
+                try:
+                    wiki_docs = json.loads(result)
+                    for doc in wiki_docs:
+                        # 为每个 Wiki 片段分配独立序号 [WIKI_N]
+                        fmt_ctx = f"[WIKI_{wiki_idx_counter}] (Source: {doc['source']})\n{doc['content']}"
+                        new_contexts.append(fmt_ctx)
+                        wiki_idx_counter += 1
+                except:
+                    new_contexts.append(f"Error parsing Wiki results: {result}")
+            else:
+                # 实时状态或其他工具结果，不带序号，作为直采信息
+                new_contexts.append(f"Tool [{tool_name}] output:\n{result}")
         else:
-            new_contexts.append(f"[{start_idx + i}] Error: Tool {tool_name} not found.")
+            new_contexts.append(f"Error: Tool {tool_name} not found.")
             
     return {
         "context": new_contexts,
@@ -138,12 +165,12 @@ async def coordinator(state: AgentState):
     return {"next_node": "final_generator", "messages": [response]}
 
 async def reflector(state: AgentState):
-    """结果反思与质检。根据序号筛选相关的 context。"""
+    """结果反思与质检。仅对带 [WIKI_N] 序号的 Wiki 检索结果进行采信筛选。"""
     context_str = "\n".join(state["context"])
     
     response = await llm.ainvoke([
         SystemMessage(content=REFLECTOR_PROMPT),
-        HumanMessage(content=f"Collected Content (with IDs):\n{context_str}\n\nUser Question: {state['messages'][-1].content}")
+        HumanMessage(content=f"Collected Content (Wiki results have [WIKI_N] IDs):\n{context_str}\n\nUser Question: {state['messages'][-1].content}")
     ])
     
     try:
@@ -162,9 +189,9 @@ async def reflector(state: AgentState):
                 "context": [f"Reflect: {analysis.critique}"]
             }
         
-        # 将筛选出的序号存入 context 标记中
+        # 将筛选出的序号存入 context 标记中，格式为 SELECTED_WIKI_INDICES: 1,2,3
         indices_str = ",".join(map(str, analysis.relevant_indices))
-        refined_marker = f"SELECTED_INDICES: {indices_str}"
+        refined_marker = f"SELECTED_WIKI_INDICES: {indices_str}"
         return {
             "next_node": "final_generator",
             "context": [refined_marker]
@@ -174,12 +201,12 @@ async def reflector(state: AgentState):
         return {"next_node": "final_generator"}
 
 async def final_generator(state: AgentState):
-    """最终回答生成。根据 Reflector 筛选的序号组装上下文。"""
-    # 查找是否有筛选出的序号 (SELECTED_INDICES)
+    """最终回答生成。组合筛选后的 Wiki 片段与全部实时环境数据。"""
+    # 查找是否有筛选出的 Wiki 序号 (SELECTED_WIKI_INDICES)
     selected_indices = []
     for item in reversed(state["context"]):
-        if item.startswith("SELECTED_INDICES: "):
-            indices_str = item.replace("SELECTED_INDICES: ", "", 1)
+        if item.startswith("SELECTED_WIKI_INDICES: "):
+            indices_str = item.replace("SELECTED_WIKI_INDICES: ", "", 1)
             if indices_str:
                 try:
                     selected_indices = [int(idx.strip()) for idx in indices_str.split(",")]
@@ -187,20 +214,22 @@ async def final_generator(state: AgentState):
                     pass
             break
             
-    if selected_indices:
-        # 根据序号提取对应的 context 片段
-        # 注意：我们需要匹配片段开头的 [ID]
-        refined_parts = []
-        for idx in selected_indices:
-            prefix = f"[{idx}] "
-            for ctx in state["context"]:
-                if ctx.startswith(prefix):
+    # 提取：(1) 采信的 Wiki 片段 + (2) 非 Wiki 工具的实时数据
+    refined_parts = []
+    for ctx in state["context"]:
+        if ctx.startswith("[WIKI_"):
+            # 检查是否在采信列表中
+            try:
+                idx = int(ctx.split("_")[1].split("]")[0])
+                if idx in selected_indices:
                     refined_parts.append(ctx)
-                    break
-        context_to_use = "\n".join(refined_parts)
-    else:
-        # 回退逻辑：如果没有序号或解析失败，使用全部 context
-        context_to_use = "\n".join(state["context"])
+            except:
+                pass
+        elif not ctx.startswith("SELECTED_WIKI_INDICES: ") and not ctx.startswith("Reflect: "):
+            # 实时状态数据等直接加入
+            refined_parts.append(ctx)
+            
+    context_to_use = "\n".join(refined_parts)
     
     # 为了流式输出文本，我们不再强制使用 structured output，
     # 而是让模型在 SystemMessage 的指导下直接输出最终文本。
