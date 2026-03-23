@@ -37,7 +37,7 @@ def setup_env():
 
 async def run_chat(args):
     """启动交互式对话 (仿 reasoning_engine 逻辑)"""
-    from src.core.agent_graph import graph
+    from core.graph import graph
     from langchain_core.messages import HumanMessage
     
     # 获取问题：从参数或手动输入
@@ -73,7 +73,7 @@ async def run_eval():
     await run_suite()
 
 def main():
-    parser = argparse.ArgumentParser(description="Sentinel-Wiki Agent 统一入口")
+    parser = argparse.ArgumentParser(description="WikiRag-Agent Agent 统一入口")
     parser.add_argument("mode", choices=["chat", "eval"], default="chat", nargs="?",
                         help="运行模式: chat (交互对话, 默认), eval (自动化评测)")
     parser.add_argument("question", nargs="*", help="针对 chat 模式的直接提问内容")

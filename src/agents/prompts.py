@@ -1,4 +1,4 @@
-# System Prompts for Sentinel-Wiki General Agents (JSON Output)
+# System Prompts for WikiRag-Agent General Agents (JSON Output)
 
 STARDEW_DOMAIN_KNOWLEDGE = """
 **星露谷物语 (Stardew Valley) 世界观设定：**

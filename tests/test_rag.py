@@ -12,7 +12,7 @@ def run_test():
     try:
         vdb = WikiVectorStore()
         
-        print("\n--- Sentinel-Wiki 向量搜索测试 (Top 30) ---")
+        print("\n--- WikiRag-Agent 向量搜索测试 (Top 30) ---")
         print("输入 'exit' 或 'quit' 退出")
         
         while True:

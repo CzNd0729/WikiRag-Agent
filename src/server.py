@@ -11,10 +11,10 @@ sys.path.append(os.path.dirname(__file__))
 # 加载环境变量
 load_dotenv()
 
-from core.agent_graph import graph
+from core.graph import graph
 
 app = FastAPI(
-    title="Sentinel-Wiki API",
+    title="WikiRag-Agent API",
     version="1.0",
     description="Universal General-Aware RAG Agent API powered by LangGraph & LangServe",
 )

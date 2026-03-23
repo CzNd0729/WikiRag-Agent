@@ -1,6 +1,6 @@
-# 🎮 Project: Sentinel-Wiki (Universal General-Aware RAG Agent)
+# Project: WikiRag-Agent
 
-**Sentinel-Wiki** 是一个基于 **LangGraph** 和 **MCP (Model Context Protocol)** 构建的高性能通用百科智能管家。
+**WikiRag-Agent** 是一个基于 **LangGraph** 和 **MCP (Model Context Protocol)** 构建的高性能通用百科智能管家。
 
 ---
 
@@ -26,6 +26,8 @@
 │   ├── server.py            # LangServe 部署入口
 │   ├── core/                # 核心通用引擎
 │   │   ├── agent_graph.py    # LangGraph 状态机编排逻辑
+│   │   ├── nodes.py          # LangGraph 节点函数定义
+│   │   ├── tools.py          # Agent 业务工具集定义
 │   │   ├── rag_engine.py     # 集成改写与重排的通用检索引擎
 │   │   └── llm_provider.py   # 多模型与多 Provider 适配层
 │   ├── agents/              # 业务 Agent 定义

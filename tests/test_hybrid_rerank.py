@@ -1,4 +1,4 @@
-from src.vectorstore.query_rag import WikiVectorStore
+from vectorstore.query_rag import WikiVectorStore
 import sys
 
 def test_hybrid_search_interactive():

@@ -4,12 +4,12 @@ import json
 from typing import Dict, List, Any
 from langsmith import Client, aevaluate
 from langchain_core.messages import HumanMessage
-from core.agent_graph import graph
+from core.graph import graph
 from core.llm_provider import get_chat_model
 from langsmith.evaluation import EvaluationResult
 
 # 配置
-DATASET_NAME = "Sentinel-Wiki-Eval-Set"
+DATASET_NAME = "WikiRag-Agent-Eval-Set"
 
 # 评测用例集
 EVAL_CASES = [
@@ -66,7 +66,7 @@ async def target_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
 def prepare_dataset(client: Client):
     """创建或更新 LangSmith 数据集"""
     if not client.has_dataset(dataset_name=DATASET_NAME):
-        dataset = client.create_dataset(DATASET_NAME, description="Sentinel-Wiki 评测基准集")
+        dataset = client.create_dataset(DATASET_NAME, description="WikiRag-Agent 评测基准集")
         for case in EVAL_CASES:
             client.create_example(
                 inputs={"question": case["question"]},
@@ -133,7 +133,7 @@ async def run_suite():
         target_agent,
         data=DATASET_NAME,
         evaluators=[llm_judge],
-        experiment_prefix="sentinel-wiki-async-judge",
+        experiment_prefix="WikiRag-Agent-async-judge",
     )
     
     print(f"\n评测完成！请访问以下链接查看详细报告：")

@@ -1,4 +1,4 @@
-# Sentinel-Wiki 技术栈库说明文档 (TECH_STACK.md)
+# WikiRag-Agent 技术栈库说明文档 (TECH_STACK.md)
 
 本项目的核心理念是 **“Wiki 提供全局知识，存档提供玩家现状，Agent 负责逻辑对齐”**。以下是实现该目标所选用的关键库及其具体作用说明。
 

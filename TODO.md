@@ -1,4 +1,4 @@
-# Sentinel-Wiki 项目开发任务清单 (TODO.md)
+# WikiRag-Agent 项目开发任务清单 (TODO.md)
 
 ## 🏗 第一阶段：基础设施与 MCP 协议集成 (已完成)
 - [x] **MCP 基础架构搭建**: 初始化 Python 环境并配置 MCP SDK 依赖。
