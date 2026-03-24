@@ -53,6 +53,19 @@ class WikiIndexer:
                 with open(md_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 
+                # 尝试提取 YAML 元数据
+                import re
+                yaml_match = re.search(r'^---\s*\n(.*?)\n---\s*\n', content, flags=re.DOTALL)
+                yaml_metadata = {}
+                if yaml_match:
+                    yaml_str = yaml_match.group(1)
+                    for line in yaml_str.split('\n'):
+                        if ':' in line:
+                            k, v = line.split(':', 1)
+                            yaml_metadata[k.strip()] = v.strip()
+                    # 移除 YAML 部分进行分块处理
+                    content = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, flags=re.DOTALL)
+
                 chunks = [c.strip() for c in content.split(self.CHUNK_SEPARATOR) if c.strip()]
                 if not chunks:
                     return
@@ -61,10 +74,11 @@ class WikiIndexer:
                 estimated_tokens = sum(len(c) for c in chunks) // 2
                 await self._rate_limit_check(estimated_tokens)
 
-                title = filename.replace(".md", "").replace("_", " ")
+                title = yaml_metadata.get("title") or filename.replace(".md", "").replace("_", " ")
                 metadata = {
                     "title": title,
-                    "category": category,
+                    "category": yaml_metadata.get("category") or category,
+                    "url": yaml_metadata.get("url", ""),
                     "source": md_path.replace("data/chunked", "data/processed")
                 }
                 

@@ -9,18 +9,15 @@ rag = RAGEngine()
 
 @tool
 async def search_wiki(query: str):
-    """检索知识库。返回分块内容及其对应的原始文件路径(source)。结果将以列表形式返回，供 Reflector 筛选。"""
+    """检索知识库。返回分块正文、原始文件路径(source)以及页面URL。"""
     docs = await rag.search(query, k=5)
     results = []
     for doc in docs:
-        title = doc.metadata.get('title', 'Knowledge')
-        source = doc.metadata.get('source', 'Unknown')
         results.append({
-            "title": title,
-            "source": source,
+            "source": doc.metadata.get('source', 'Unknown'),
+            "url": doc.metadata.get('url', ''),
             "content": doc.page_content
         })
-    # 返回 JSON 字符串，以便 tools_node 处理
     return json.dumps(results)
 
 @tool

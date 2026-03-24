@@ -158,16 +158,20 @@ class WikiChunker:
                     with open(md_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     
-                    # 剥离 Markdown 开头的 YAML Front-matter 元数据
+                    # 提取 YAML Front-matter 元数据
+                    yaml_match = re.search(r'^(---\s*\n.*?\n---\s*\n)', content, flags=re.DOTALL)
+                    yaml_header = yaml_match.group(1) if yaml_match else ""
+                    
+                    # 剥离元数据进行分块
                     clean_content = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, flags=re.DOTALL)
                     
                     print(f"Chunking and cleaning {relative_path}/{filename}...")
                     clean_chunks = self.split_and_clean_content(clean_content)
                     
                     if clean_chunks:
-                        # 在清洗后的分块间加入标识符存入新文件
+                        # 在清洗后的分块间加入标识符存入新文件，保留原始 YAML Header
                         chunked_content = self.CHUNK_SEPARATOR.join(clean_chunks)
-                        final_content = "<!-- CHUNK_START -->\n\n" + chunked_content
+                        final_content = yaml_header + "<!-- CHUNK_START -->\n\n" + chunked_content
                         
                         target_path = os.path.join(target_dir, filename)
                         with open(target_path, "w", encoding="utf-8") as f:

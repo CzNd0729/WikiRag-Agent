@@ -44,13 +44,12 @@ class WikiVectorStore:
         final_docs = []
         
         for chunk_clean in chunks:
-            # 使用统一的注入格式 [页面标题: xxx]
+            # 使用统一的注入格式 [页面标题: {title}]
             content_for_vector = f"[页面标题: {title}]\n内容: {chunk_clean}"
             final_docs.append(Document(
                 page_content=content_for_vector,
                 metadata={
                     **metadata,
-                    "original_markdown": chunk_clean,
                     "title": title
                 }
             ))
@@ -71,13 +70,12 @@ class WikiVectorStore:
         final_docs = []
         
         for chunk_clean in chunks:
-            # 使用统一的注入格式 [页面标题: xxx]
+            # 使用统一的注入格式 [页面标题: {title}]
             content_for_vector = f"[页面标题: {title}]\n内容: {chunk_clean}"
             final_docs.append(Document(
                 page_content=content_for_vector,
                 metadata={
                     **metadata,
-                    "original_markdown": chunk_clean,
                     "title": title
                 }
             ))

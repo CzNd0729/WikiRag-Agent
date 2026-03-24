@@ -48,24 +48,36 @@ async def tools_node(state: AgentState):
         if tool_name in tool_map:
             result = await tool_map[tool_name].ainvoke(tool_args)
             
-            # 提取引用源 (Source/URL)
-            if tool_name in ["search_wiki", "read_full_wiki"]:
+            final_content = str(result)
+            
+            # 特殊处理 search_wiki: 提取 URL 并精简 ToolMessage 内容
+            if tool_name == "search_wiki":
                 try:
                     data = json.loads(result)
                     if isinstance(data, list):
-                        # search_wiki 返回列表
+                        content_list = []
                         for doc in data:
-                            if "source" in doc:
+                            if "url" in doc and doc["url"]:
+                                new_documents.append(doc["url"])
+                            # 即使没有 url，也将 source 存入 documents 作为兜底引用
+                            elif "source" in doc:
                                 new_documents.append(doc["source"])
-                    elif isinstance(data, dict) and "source" in data:
-                        # read_full_wiki 可能返回单个对象
-                        new_documents.append(data["source"])
+                            
+                            # 提取正文用于 ToolMessage
+                            content_list.append(doc.get("content", ""))
+                        
+                        # ToolMessage 仅保留正文内容，减少 token 占用并保持纯净
+                        final_content = "\n\n---\n\n".join(content_list)
                 except:
                     pass
+            elif tool_name == "read_full_wiki":
+                # read_full_wiki 的结果通常是纯文本，尝试将其 path 存入 documents
+                if "source_path" in tool_args:
+                    new_documents.append(tool_args["source_path"])
             
             # 完整记录到消息列表（作为思维链）
             new_messages.append(ToolMessage(
-                content=str(result),
+                content=final_content,
                 tool_call_id=tool_call["id"]
             ))
         else:
@@ -156,20 +168,47 @@ async def reflector(state: AgentState):
         return {"next_node": "final_generator"}
 
 async def final_generator(state: AgentState):
-    """基于完整思维链（messages）和文档引用（documents）生成最终回答。"""
-    # 构造包含完整历史的消息列表
+    """基于完整思维链（messages）生成回答，并程序化填充文档引用（documents）。"""
+    # 构造包含完整历史的消息列表，不再将 documents 显式发给 AI
     prompt_messages = [
         SystemMessage(content=FINAL_GENERATOR_PROMPT),
     ]
     # 注入历史（包含 ToolMessages，已具备所有事实）
     prompt_messages.extend(state["messages"])
     
-    # 注入引用源信息
-    if state.get("documents"):
-        unique_docs = list(set(state["documents"]))
-        prompt_messages.append(SystemMessage(content=f"参考来源列表：\n" + "\n".join(unique_docs)))
-    
     response = await llm.ainvoke(prompt_messages)
+    
+    # 程序化处理输出：将 state["documents"] 注入到 response 的 metadata 或 content 中
+    try:
+        content = response.content.strip()
+        # 去除可能存在的 markdown 格式
+        if content.startswith("```json"):
+            content = content[7:-3].strip()
+        elif content.startswith("```"):
+            content = content.strip("`").strip()
+            
+        ai_data = json.loads(content)
+        
+        # 构建最终输出 JSON，强制包含程序化的 sources
+        final_data = {
+            "answer": ai_data.get("answer", ""),
+            "sources": list(set(state.get("documents", []))),
+            "actionable_tips": ai_data.get("actionable_tips", [])
+        }
+            
+        # 写回 response content
+        response.content = json.dumps(final_data, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Final generator post-processing error: {e}")
+        # 如果解析失败，尝试构建一个兜底结构
+        if state.get("documents"):
+             fallback = {
+                 "answer": response.content,
+                 "sources": list(set(state["documents"])),
+                 "actionable_tips": []
+             }
+             response.content = json.dumps(fallback, ensure_ascii=False)
+        
     return {"messages": [response]}
 
 async def summarizer(state: AgentState):
