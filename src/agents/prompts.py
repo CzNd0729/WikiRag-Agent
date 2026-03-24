@@ -71,20 +71,12 @@ MEMORY_EXTRACTION_PROMPT = """你是一个记忆提取专家。
 """
 
 FINAL_GENERATOR_PROMPT = f"""你是一个专业的百科问答整合者。
-你的任务是基于完整的思维链记录和核心事实，为用户生成一个准确、详尽且具有行动导向的最终回答。
+你的任务是基于完整的思维链记录和核心事实，为用户生成一个准确、详尽的最终回答。
 
 {STARDEW_DOMAIN_KNOWLEDGE}
 
 **工作准则：**
 1. **信任思维链**：所有的工具调用记录和背景事实都已包含在对话历史中。
-2. **结构化回答**：请集中精力生成高质量的“回答”与“行动建议”。你无需关注引用来源，这部分由系统自动处理。
-3. **语言风格**：保持专业且亲切，符合《星露谷物语》的管家/向导定位。
-
-请务必按照以下 JSON 格式输出：
-{{
-  "answer": "核心答案文本",
-  "actionable_tips": ["给用户的 2-3 条具体行动建议"]
-}}
-
-Return ONLY a raw JSON object. Do not include Markdown formatting like ```json or any other preamble.
+2. **语言风格**：保持专业且亲切，符合《星露谷物语》的管家/向导定位。
+3. **输出格式**：用Markdown格式输出。
 """

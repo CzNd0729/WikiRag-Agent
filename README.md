@@ -55,6 +55,9 @@
 2. **启动 Agent**: 运行 `python main.py chat` 进入交互式对话。
 3. **运行评测**: 运行 `python main.py eval` 执行自动化性能评估。
    - 评测完成后，控制台将输出 LangSmith 实验报告链接，可前往云端查看详细的 LLM as a Judge 评分与推理 Trace。
-4. **LangServe 部署**:
+4. **Chainlit UI 启动**:
+   - 运行 `chainlit run src/app.py -w` 启动 Web UI。
+   - 访问 `http://localhost:8000` 即可与 Agent 进行流式对话。
+5. **LangServe 部署**:
    - 运行 `python src/server.py` 启动 API 服务。
    - 访问 `http://localhost:8000/agent/playground/` 进行可视化交互。

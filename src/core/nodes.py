@@ -173,8 +173,8 @@ async def reflector(state: AgentState):
         return {"next_node": "final_generator"}
 
 async def final_generator(state: AgentState):
-    """基于完整思维链（messages）生成回答，并程序化填充文档引用（documents）。"""
-    # 构造包含完整历史的消息列表，不再将 documents 显式发给 AI
+    """基于完整思维链（messages）生成回答。"""
+    # 构造包含完整历史的消息列表
     prompt_messages = [
         SystemMessage(content=FINAL_GENERATOR_PROMPT),
     ]
@@ -182,38 +182,6 @@ async def final_generator(state: AgentState):
     prompt_messages.extend(state["messages"])
     
     response = await llm.ainvoke(prompt_messages)
-    
-    # 程序化处理输出：将 state["documents"] 注入到 response 的 metadata 或 content 中
-    try:
-        content = response.content.strip()
-        # 去除可能存在的 markdown 格式
-        if content.startswith("```json"):
-            content = content[7:-3].strip()
-        elif content.startswith("```"):
-            content = content.strip("`").strip()
-            
-        ai_data = json.loads(content)
-        
-        # 构建最终输出 JSON，强制包含程序化的 sources
-        final_data = {
-            "answer": ai_data.get("answer", ""),
-            "sources": list(set(state.get("documents", []))),
-            "actionable_tips": ai_data.get("actionable_tips", [])
-        }
-            
-        # 写回 response content
-        response.content = json.dumps(final_data, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Final generator post-processing error: {e}")
-        # 如果解析失败，尝试构建一个兜底结构
-        if state.get("documents"):
-             fallback = {
-                 "answer": response.content,
-                 "sources": list(set(state["documents"])),
-                 "actionable_tips": []
-             }
-             response.content = json.dumps(fallback, ensure_ascii=False)
-        
     return {"messages": [response]}
 
 async def summarizer(state: AgentState):

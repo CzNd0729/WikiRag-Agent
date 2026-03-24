@@ -30,3 +30,10 @@ Thumbs.db
 data/
 /vectorstore/
 /.langgraph_api
+
+# Chainlit
+.chainlit/
+chainlit.db
+.chainlit.md
+.cl/
+.files
