@@ -42,15 +42,16 @@ async def read_full_wiki(source_path: str):
     except Exception as e:
         return f"Error reading file: {e}"
 
-@tool
-async def get_context_status():
-    """读取实时环境基础数据。"""
-    return get_player_status()
+# @tool
+# async def get_context_status():
+#     """读取实时环境基础数据。"""
+#     return get_player_status()
 
-@tool
-async def get_context_details():
-    """读取环境详细清单。"""
-    return get_inventory()
+# @tool
+# async def get_context_details():
+#     """读取环境详细清单。"""
+#     return get_inventory()
 
 # 统一导出工具列表
-tools = [search_wiki, read_full_wiki, get_context_status, get_context_details]
+# tools = [search_wiki, read_full_wiki, get_context_status, get_context_details]
+tools = [search_wiki, read_full_wiki]

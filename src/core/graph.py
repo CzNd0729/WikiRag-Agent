@@ -5,7 +5,9 @@ from core.nodes import (
     tools_node, 
     reflector, 
     final_generator, 
-    summarizer
+    summarizer,
+    memory_retriever,
+    memory_refiner
 )
 
 def build_graph():
@@ -13,14 +15,19 @@ def build_graph():
     workflow = StateGraph(AgentState)
     
     # 添加节点
+    workflow.add_node("memory_retriever", memory_retriever)
     workflow.add_node("coordinator", coordinator)
     workflow.add_node("tools", tools_node)
     workflow.add_node("reflector", reflector)
     workflow.add_node("final_generator", final_generator)
     workflow.add_node("summarizer", summarizer)
+    workflow.add_node("memory_refiner", memory_refiner)
     
     # 设置入口
-    workflow.set_entry_point("coordinator")
+    workflow.set_entry_point("memory_retriever")
+    
+    # 记忆检索后进入协调者
+    workflow.add_edge("memory_retriever", "coordinator")
     
     # 添加条件边与普通边
     workflow.add_conditional_edges("coordinator", lambda x: x["next_node"], {
@@ -37,7 +44,8 @@ def build_graph():
     })
     
     workflow.add_edge("final_generator", "summarizer")
-    workflow.add_edge("summarizer", END)
+    workflow.add_edge("summarizer", "memory_refiner")
+    workflow.add_edge("memory_refiner", END)
     
     # 编译图
     return workflow.compile()

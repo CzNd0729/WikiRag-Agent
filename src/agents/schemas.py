@@ -5,20 +5,12 @@ import operator
 
 def update_messages(left: List[BaseMessage], right: Union[BaseMessage, List[BaseMessage]]) -> List[BaseMessage]:
     """
-    自定义消息更新逻辑。
-    如果收到 ToolMessage，将其过滤掉（因为它会被存入 context），
-    只保留 HumanMessage 和 AIMessage (对话记录)。
+    标准消息追加逻辑，保留完整的思维链（包含 ToolMessage）。
     """
     if not isinstance(right, list):
         right = [right]
     
-    new_messages = left.copy()
-    for msg in right:
-        # 过滤掉工具输出消息，这些内容会存入 context 而非对话历史
-        if isinstance(msg, ToolMessage):
-            continue
-        new_messages.append(msg)
-    return new_messages
+    return left + right
 
 class AgentAction(BaseModel):
     """Agent 建议执行的下一个动作。"""
@@ -31,8 +23,7 @@ class AgentAction(BaseModel):
 class ReflectorAnalysis(BaseModel):
     """反思节点生成的分析。"""
     is_sufficient: bool = Field(description="当前收集的信息是否足以回答用户问题。")
-    critique: str = Field(description="如果不足，说明缺失的信息；如果充足，说明改进建议。")
-    relevant_indices: List[int] = Field(default=[], description="与回答用户提问直接相关的 context 片段序号列表。")
+    critique: str = Field(description="改进建议或缺失信息说明。")
     next_step: Literal["continue", "finish"] = Field(description="下一步是继续检索还是结束生成。")
 
 class FinalResponse(BaseModel):
@@ -43,14 +34,17 @@ class FinalResponse(BaseModel):
 
 class AgentState(TypedDict):
     """LangGraph 状态定义。"""
-    # 消息列表，只保留用户与 AI 的对话记录
+    # 消息列表，包含完整思维链（Human, AI, Tool）
     messages: Annotated[List[BaseMessage], update_messages]
     # 当前对话摘要（长会话管理）
     summary: str
-    # 专家收集到的原始背景知识或实时环境片段
-    # 使用 Annotated[List[str], operator.add] 可能会导致冗余，但在 reflector 节点我们会手动覆盖或重整它
-    context: Annotated[List[str], operator.add]
+    # 检索到的原始文档引用（如 Source 路径/URL），不进入 LLM 上下文，仅用于最终溯源
+    documents: Annotated[List[str], operator.add]
     # 下一个目标节点
     next_node: str
     # 反思次数，防止死循环
     reflection_count: int
+    # 长期记忆 (Long-Term Memory)，存储用户偏好、重要事实等
+    long_term_memory: List[str]
+    # 会话唯一标识，用于持久化记忆
+    conversation_id: str
