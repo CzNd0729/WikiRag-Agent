@@ -93,18 +93,23 @@ async def tools_node(state: AgentState):
     }
 
 async def memory_retriever(state: AgentState):
-    """记忆检索节点：在对话开始前获取长期记忆。"""
-    last_query = state["messages"][-1].content
-    conv_id = state.get("conversation_id", "default")
+    """
+    记忆检索节点：在对话开始前获取用户画像。
+    从 PostgreSQL 获取该用户的持久化画像 (User Profile)。
+    """
+    user_id = state.get("user_id", "default_user")
     
-    ltm = await memory_manager.retrieve_long_term_memory(last_query, conv_id)
+    # 1. 获取持久化的用户画像
+    user_profile = await memory_manager.get_user_profile(user_id)
     
-    # 这里我们返回的是对 state 的增量更新
-    # 如果 retrieve_long_term_memory 返回的是字符串，我们将其放入列表
-    ltm_list = [ltm] if ltm else []
+    # 注入上下文
+    combined_memories = []
+    if user_profile:
+        combined_memories.append("### User Profile (Facts & Preferences):")
+        combined_memories.extend([f"- {f}" for f in user_profile])
     
     return {
-        "long_term_memory": ltm_list
+        "long_term_memory": combined_memories
     }
 
 async def coordinator(state: AgentState):
@@ -233,25 +238,31 @@ async def summarizer(state: AgentState):
     return {**summary_update}
 
 async def memory_refiner(state: AgentState):
-    """记忆固化节点：从对话中提取并优化长期记忆。"""
+    """
+    记忆固化节点：从对话中提取并优化记忆。
+    1. 提取新事实并更新 PostgreSQL 中的用户画像。
+    2. 将关键对话片段存入 ChromaDB，按 user_id 隔离。
+    """
     messages = state["messages"]
-    current_ltm = state.get("long_term_memory", [])
-    conv_id = state.get("conversation_id", "default")
+    user_id = state.get("user_id", "default_user")
+    conv_id = state.get("conversation_id", "default_conv")
     
     # 提取新事实
     new_facts = await memory_manager.extract_memorable_facts(messages, state.get("summary", ""))
     
     if new_facts:
-        # 合并并优化长期记忆
-        refine_prompt = MEMORY_REFINE_PROMPT + f"\n\nCurrent Memories:\n{current_ltm}\n\nNew Facts:\n{new_facts}"
+        # 1. 更新用户画像 (PostgreSQL)
+        current_profile = await memory_manager.get_user_profile(user_id)
+        refine_prompt = MEMORY_REFINE_PROMPT + f"\n\nCurrent Profile:\n{current_profile}\n\nNew Facts:\n{new_facts}"
         response = await llm.ainvoke([SystemMessage(content=refine_prompt)])
         
-        # 简单处理输出，假设模型返回按行分隔的事实
-        refined_ltm = [line.strip("- ").strip() for line in response.content.split("\n") if line.strip()]
+        # 假设模型返回按行分隔的事实
+        refined_profile = [line.strip("- ").strip() for line in response.content.split("\n") if line.strip()]
+        memory_manager.update_user_profile(user_id, refined_profile)
         
-        # 持久化
-        memory_manager.persist_memory(refined_ltm, conv_id)
+        # 2. 持久化对话历史 (ChromaDB) - 暂时不需要
+        # memory_manager.persist_chat_history(new_facts, user_id, conv_id)
         
-        return {"long_term_memory": refined_ltm}
+        return {"long_term_memory": refined_profile}
         
     return {}

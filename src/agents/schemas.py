@@ -46,5 +46,7 @@ class AgentState(TypedDict):
     reflection_count: int
     # 长期记忆 (Long-Term Memory)，存储用户偏好、重要事实等
     long_term_memory: List[str]
-    # 会话唯一标识，用于持久化记忆
+    # 用户唯一标识，用于持久化用户画像（跨会话）
+    user_id: str
+    # 会话唯一标识，用于持久化记忆（单会话）
     conversation_id: str

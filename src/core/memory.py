@@ -1,70 +1,128 @@
 import json
+import os
 from typing import List, Optional
 from langchain_core.messages import BaseMessage
 from core.llm_provider import get_chat_model, get_embedding_model
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_chroma import Chroma
-from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from agents.prompts import MEMORY_EXTRACTION_PROMPT
+# from langchain_chroma import Chroma
+# from langchain_core.documents import Document
+from sqlalchemy import create_engine, Column, String, Text, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+
+load_dotenv()
+
+Base = declarative_base()
+
+class UserProfile(Base):
+    """PostgreSQL 中的用户画像模型。"""
+    __tablename__ = 'user_profiles'
+    user_id = Column(String, primary_key=True)
+    profile = Column(Text, default="[]") # 存储经过精炼的事实列表
 
 class MemoryManager:
     """
-    企业级记忆管理器，负责长短期记忆的协同，并接入 ChromaDB 持久化。
+    记忆管理器：
+    1. PostgreSQL: 存储持久化的用户画像（跨会话）。
     """
     def __init__(self, persist_directory: str = "vectorstore/db"):
         self.llm = get_chat_model("AGENT_LLM")
         self.embeddings = get_embedding_model()
         self.persist_directory = persist_directory
         
-        # 记忆专用的 Collection：user_memories
-        self.vector_db = Chroma(
-            persist_directory=persist_directory,
-            embedding_function=self.embeddings,
-            collection_name="user_memories",
-            collection_metadata={"hnsw:space": "cosine"}
-        )
+        # 1. 初始化 PostgreSQL
+        postgres_url = os.getenv("POSTGRES_URL")
+        if postgres_url:
+            self.engine = create_engine(postgres_url)
+            Base.metadata.create_all(self.engine)
+            self.Session = sessionmaker(bind=self.engine)
+        else:
+            self.Session = None
+            print("Warning: POSTGRES_URL not set. User profiles will not be persisted to PostgreSQL.")
 
-    async def retrieve_long_term_memory(self, query: str, conversation_id: str, k: int = 5) -> str:
-        """
-        检索长期记忆。
-        使用语义搜索从 ChromaDB 中召回相关的历史记忆或事实。
-        """
-        # 我们可以根据 conversation_id 过滤（如果需要的话），或者全局检索
-        # 这里先实现全局检索，以便跨会话共享记忆
-        try:
-            results = await self.vector_db.asimilarity_search(query, k=k)
-            if not results:
-                return ""
+        # 2. 初始化 ChromaDB (对话历史集合) - 暂时不需要
+        # self.vector_db = Chroma(
+        #     persist_directory=persist_directory,
+        #     embedding_function=self.embeddings,
+        #     collection_name="user_chat_history", # 独立于 wiki 知识库
+        #     collection_metadata={"hnsw:space": "cosine"}
+        # )
+
+    async def get_user_profile(self, user_id: str) -> List[str]:
+        """从 PostgreSQL 获取用户画像。"""
+        if not self.Session:
+            return []
+        
+        with self.Session() as session:
+            user = session.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+            if user and user.profile:
+                try:
+                    return json.loads(user.profile)
+                except:
+                    return [user.profile]
+            return []
+
+    def update_user_profile(self, user_id: str, facts: List[str]):
+        """将更新后的用户画像持久化到 PostgreSQL。"""
+        if not self.Session:
+            return
             
-            memories = [doc.page_content for doc in results]
-            return "\n".join([f"- {m}" for m in memories])
-        except Exception as e:
-            print(f"Long-term memory retrieval error: {e}")
-            return ""
+        with self.Session() as session:
+            user = session.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+            if not user:
+                user = UserProfile(user_id=user_id)
+                session.add(user)
+            
+            user.profile = json.dumps(facts, ensure_ascii=False)
+            session.commit()
+
+    async def retrieve_chat_history(self, query: str, user_id: str, k: int = 5) -> str:
+        """
+        从 ChromaDB 检索该用户的相关对话历史。- 暂时不需要
+        """
+        return ""
+        # try:
+        #     results = await self.vector_db.asimilarity_search(
+        #         query, 
+        #         k=k, 
+        #         filter={"user_id": user_id}
+        #     )
+        #     if not results:
+        #         return ""
+        #     
+        #     memories = [doc.page_content for doc in results]
+        #     return "\n".join([f"- {m}" for m in memories])
+        # except Exception as e:
+        #     print(f"Chat history retrieval error: {e}")
+        #     return ""
 
     async def extract_memorable_facts(self, messages: List[BaseMessage], current_summary: str) -> List[str]:
         """
         从对话中提取值得长期记忆的事实。
+        仅保留用户提问 (HumanMessage) 和 AI 最终回答 (AIMessage)，过滤掉中间过程噪音。
         """
         if not messages:
             return []
             
-        extraction_prompt = """你是一个记忆提取专家。请从以下对话和摘要中提取关于用户的长期偏好、重要事实或关键决策。
-请只提取对未来对话有持续参考价值的信息。
-如果你发现某些信息已经过时（例如用户改变了主意），请明确指出新的事实。
-如果没有发现值得记忆的信息，请返回空列表 []。
+        # 过滤出原始问题和最终回答
+        filtered_history = [
+            m for m in messages 
+            if isinstance(m, (HumanMessage, AIMessage)) and not getattr(m, "tool_calls", None)
+        ]
+        
+        if not filtered_history:
+            return []
 
-输出格式：JSON 字符串列表，例如 ["用户喜欢在春天种植防风草", "用户目前的金钱目标是 10000G"]
-"""
-        # 取最近的对话片段
-        history_text = "\n".join([f"{m.type}: {m.content}" for m in messages[-10:]])
-        content = f"Summary: {current_summary}\nRecent History:\n{history_text}"
+        history_text = "\n".join([f"{m.type.upper()}: {m.content}" for m in filtered_history])
+        content = f"Context Summary: {current_summary}\nFiltered Conversation:\n{history_text}"
         
         try:
             response = await self.llm.ainvoke([
-                SystemMessage(content=extraction_prompt),
+                SystemMessage(content=MEMORY_EXTRACTION_PROMPT),
                 HumanMessage(content=content)
             ])
-            # 解析 JSON 列表
             text = response.content.strip()
             if text.startswith("```json"):
                 text = text[7:-3].strip()
@@ -77,26 +135,28 @@ class MemoryManager:
             print(f"Memory extraction error: {e}")
             return []
 
-    def persist_memory(self, facts: List[str], conversation_id: str):
+    def persist_chat_history(self, facts: List[str], user_id: str, conversation_id: str):
         """
-        将提取的事实持久化到 ChromaDB。
+        将提取的对话事实存入 ChromaDB。- 暂时不需要
         """
-        if not facts:
-            return
-            
-        documents = []
-        for fact in facts:
-            documents.append(Document(
-                page_content=fact,
-                metadata={
-                    "conversation_id": conversation_id,
-                    "source": "user_memory",
-                    "timestamp": json.dumps({"created_at": "now"}) # 占位
-                }
-            ))
-        
-        try:
-            self.vector_db.add_documents(documents)
-            print(f"Successfully persisted {len(documents)} memory items to ChromaDB.")
-        except Exception as e:
-            print(f"Memory persistence error: {e}")
+        pass
+        # if not facts:
+        #     return
+        #     
+        # documents = []
+        # for fact in facts:
+        #     documents.append(Document(
+        #         page_content=fact,
+        #         metadata={
+        #             "user_id": user_id,
+        #             "conversation_id": conversation_id,
+        #             "source": "chat_history",
+        #             "timestamp": "now"
+        #         }
+        #     ))
+        # 
+        # try:
+        #     self.vector_db.add_documents(documents)
+        #     print(f"Successfully persisted {len(documents)} chat history items for user {user_id} to ChromaDB.")
+        # except Exception as e:
+        #     print(f"Chat history persistence error: {e}")

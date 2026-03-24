@@ -26,7 +26,7 @@
 │   ├── server.py            # LangServe 部署入口
 │   ├── core/                # 核心通用引擎
 │   │   ├── graph.py         # LangGraph 状态机编排逻辑
-│   │   ├── memory.py        # 长短期记忆管理模块
+│   │   ├── memory.py        # 记忆管理模块 (PostgreSQL 用户画像 + Chroma 对话隔离)
 │   │   ├── nodes.py          # LangGraph 节点函数定义
 │   │   ├── tools.py          # Agent 业务工具集定义
 │   │   ├── rag_engine.py     # 集成改写与重排的通用检索引擎
