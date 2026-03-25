@@ -2,11 +2,11 @@ import os
 import asyncio
 import json
 from typing import Dict, List, Any
-from langsmith import Client, aevaluate
+from langfuse import Langfuse
 from langchain_core.messages import HumanMessage
 from core.graph import graph
 from core.llm_provider import get_chat_model
-from langsmith.evaluation import EvaluationResult
+from langfuse.callback import CallbackHandler
 
 # 配置
 DATASET_NAME = "WikiRag-Agent-Eval-Set"
@@ -35,11 +35,14 @@ EVAL_CASES = [
     }
 ]
 
-async def target_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
+async def target_agent(question: str, callback_handler: CallbackHandler) -> Dict[str, Any]:
     """评测目标：Agent 逻辑 (异步)"""
-    config = {"configurable": {"thread_id": "eval_thread_" + os.urandom(4).hex()}}
+    config = {
+        "configurable": {"thread_id": "eval_thread_" + os.urandom(4).hex()},
+        "callbacks": [callback_handler]
+    }
     initial_state = {
-        "messages": [HumanMessage(content=inputs["question"])],
+        "messages": [HumanMessage(content=question)],
         "reflection_count": 0,
         "context": []
     }
@@ -63,27 +66,24 @@ async def target_agent(inputs: Dict[str, Any]) -> Dict[str, Any]:
         "used_tools": used_tools
     }
 
-def prepare_dataset(client: Client):
-    """创建或更新 LangSmith 数据集"""
-    if not client.has_dataset(dataset_name=DATASET_NAME):
-        dataset = client.create_dataset(DATASET_NAME, description="WikiRag-Agent 评测基准集")
+def prepare_dataset(langfuse: Langfuse):
+    """创建或更新 Langfuse 数据集"""
+    try:
+        langfuse.get_dataset(DATASET_NAME)
+        print(f"数据集 {DATASET_NAME} 已存在。")
+    except:
+        langfuse.create_dataset(name=DATASET_NAME, description="WikiRag-Agent 评测基准集")
         for case in EVAL_CASES:
-            client.create_example(
-                inputs={"question": case["question"]},
-                outputs={"reference": case["reference"]},
-                dataset_id=dataset.id
+            langfuse.create_dataset_item(
+                dataset_name=DATASET_NAME,
+                input={"question": case["question"]},
+                expected_output={"reference": case["reference"]}
             )
         print(f"数据集 {DATASET_NAME} 创建完成。")
-    else:
-        print(f"数据集 {DATASET_NAME} 已存在。")
 
-async def llm_judge(run: Any, example: Any) -> EvaluationResult:
+async def llm_judge(question: str, prediction: str, reference: str) -> Dict[str, Any]:
     """异步 LLM Judge"""
     judge_llm = get_chat_model("JUDGE_LLM")
-    
-    prediction = run.outputs.get("output", "")
-    reference = example.outputs.get("reference", "")
-    question = example.inputs.get("question", "")
     
     prompt = f"""你是一名专业的 AI 评测员。请对比以下【AI 回答】与【参考答案】，判断其准确性。
 
@@ -110,34 +110,45 @@ async def llm_judge(run: Any, example: Any) -> EvaluationResult:
         if content.startswith("```json"):
             content = content.replace("```json", "").replace("```", "").strip()
         
-        res_data = json.loads(content)
-        return EvaluationResult(
-            key="correctness",
-            score=float(res_data.get("score", 0)),
-            comment=res_data.get("reasoning", "No reasoning provided")
-        )
+        return json.loads(content)
     except Exception as e:
-        return EvaluationResult(
-            key="correctness",
-            score=0.0,
-            comment=f"Judge Error: {str(e)}"
-        )
+        return {"score": 0, "reasoning": f"Judge Error: {str(e)}"}
 
 async def run_suite():
-    print("=== Starting LangSmith Powered Evaluation (Async) ===")
-    client = Client()
-    prepare_dataset(client)
+    print("=== Starting Langfuse Powered Evaluation (Async) ===")
+    langfuse = Langfuse()
+    prepare_dataset(langfuse)
     
-    # 切换到 aevaluate 处理异步目标函数
-    results = await aevaluate(
-        target_agent,
-        data=DATASET_NAME,
-        evaluators=[llm_judge],
-        experiment_prefix="WikiRag-Agent-async-judge",
-    )
+    dataset = langfuse.get_dataset(DATASET_NAME)
     
-    print(f"\n评测完成！请访问以下链接查看详细报告：")
-    print(results)
+    for item in dataset.items:
+        print(f"Evaluating: {item.input['question']}")
+        
+        # 为每个 item 创建一个 trace 关联到 dataset
+        callback_handler = CallbackHandler()
+        
+        # 运行 Agent
+        prediction_result = await target_agent(item.input['question'], callback_handler)
+        
+        # 运行 Judge
+        judge_result = await llm_judge(
+            item.input['question'],
+            prediction_result['output'],
+            item.expected_output['reference']
+        )
+        
+        # 将结果链接到数据集
+        item.link(callback_handler.get_trace_id(), "WikiRag-Agent-Judge")
+        
+        # 记录评分
+        langfuse.score(
+            trace_id=callback_handler.get_trace_id(),
+            name="correctness",
+            value=judge_result['score'],
+            comment=judge_result['reasoning']
+        )
+        
+    print(f"\n评测完成！请访问 Langfuse 控制台查看详细报告。")
 
 if __name__ == "__main__":
     asyncio.run(run_suite())

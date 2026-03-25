@@ -27,7 +27,8 @@ def setup_env():
         "AGENT_LLM_API_KEY", 
         "EMBEDDING_API_KEY", 
         "VECTOR_DB_DIR",
-        "LANGCHAIN_API_KEY"
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_PUBLIC_KEY"
     ]
     missing = [var for var in required_vars if not os.getenv(var)]
     if missing:
@@ -39,6 +40,10 @@ async def run_chat(args):
     """启动交互式对话 (仿 reasoning_engine 逻辑)"""
     from core.graph import graph
     from langchain_core.messages import HumanMessage
+    from langfuse.callback import CallbackHandler
+    
+    # 注入 Langfuse Callback
+    langfuse_handler = CallbackHandler()
     
     # 获取问题：从参数或手动输入
     if args.question:
@@ -50,7 +55,10 @@ async def run_chat(args):
         print("问题不能为空。")
         return
 
-    config = {"configurable": {"thread_id": "main_chat_user_" + os.urandom(4).hex()}}
+    config = {
+        "configurable": {"thread_id": "main_chat_user_" + os.urandom(4).hex()},
+        "callbacks": [langfuse_handler]
+    }
     print(f"\nUser: {question}\n")
     
     inputs = {
@@ -66,6 +74,9 @@ async def run_chat(args):
             print(msg.content, end="", flush=True)
     print("\n")
     print("-" * 20)
+    
+    # 确保 Langfuse 数据上传完成
+    langfuse_handler.flush()
 
 async def run_eval():
     """启动评测套件"""

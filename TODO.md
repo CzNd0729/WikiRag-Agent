@@ -24,7 +24,7 @@
     - [x] 优化长对话中的跨轮次记忆追踪。
 
 ## 📊 第四阶段：全链路评测与部署 (闭环 - 已完成)
-- [x] **接入 LangSmith**: 配置 Trace 追踪，支持在 `.env` 中开启 `LANGCHAIN_TRACING_V2`。
+- [x] **接入 Langfuse**: 配置 Trace 追踪，支持在 `.env` 中开启 Langfuse。
 - [x] **评测工程**:
     - [x] 构建自动化评测集 `tests/eval_suite.py`。
     - [x] 引入基于关键词与工具调用的多维评分机制。
